@@ -88,7 +88,9 @@ Second app from AIL Apps, after [Shohoj Hishab](https://github.com/ailinkon/shoh
 ## License
 
 
-##Sample
+
+
+## Sample
 <img width="464" height="445" alt="Screenshot 2026-07-12 034706" src="https://github.com/user-attachments/assets/873da421-0657-44c7-a6b0-be6f4b196455" />
 
 <img width="417" height="372" alt="Screenshot 2026-07-12 034511" src="https://github.com/user-attachments/assets/c70ad6ef-f69b-4cf0-ae52-dd60a6e61790" />
