@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Printer, Download, Eye, AlertCircle, ArrowLeft, CreditCard, ExternalLink, Smartphone, Wallet, Building2, CheckCircle, Check, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Printer, Download, Eye, AlertCircle, ArrowLeft, CreditCard, ExternalLink, Smartphone, Wallet, Building2, CheckCircle, Check, X, Mail } from 'lucide-react';
 import { InvoiceDraft, BusinessProfile, TaxConfig } from '../types';
 import { formatMoney } from '../constants';
+import { calculateInvoiceTotals, lineTotal } from '../utils/calculations';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -18,130 +19,132 @@ interface InvoicePreviewViewProps {
 }
 
 export default function InvoicePreviewView({ draft, profile, tax, onEdit }: InvoicePreviewViewProps) {
-  const items = draft.items;
-  
-  // Clean line items list (ignore completely blank ones)
-  const validItems = items.filter(item => item.description.trim() !== '' || item.quantity > 0 || item.unitPrice > 0);
-  
-  // Calculate pricing numbers using our dual-tax formulas
-  const grossSubtotal = validItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
-  
-  let discountAmountGross = 0;
-  if (draft.discountType === 'percentage') {
-    discountAmountGross = grossSubtotal * (draft.discountValue / 100);
-  } else {
-    discountAmountGross = draft.discountValue;
-  }
-  discountAmountGross = Math.min(discountAmountGross, grossSubtotal);
+  const validItems = draft.items.filter(item => item.description.trim() !== '' || item.unitPrice > 0);
+  const grossSubtotal = Math.round((validItems.reduce((sum, i) => sum + lineTotal(i), 0) + Number.EPSILON) * 100) / 100;
 
-  let netSubtotal = 0;
-  let netDiscount = 0;
-  let taxAmount = 0;
-  let grandTotal = 0;
-  const taxRateName = profile.taxRegLabel ? profile.taxRegLabel : 'Tax';
+  const { subtotal: netSubtotal, discount: netDiscount, taxAmount, grandTotal } =
+    calculateInvoiceTotals(draft.items, draft.discountType, draft.discountValue, tax);
 
-  if (tax.taxEnabled && tax.taxRate > 0) {
-    if (tax.taxInclusive) {
-      // Mode A — Prices INCLUDE tax (tax-inclusive):
-      const grossTotal = Math.max(0, grossSubtotal - discountAmountGross);
-      taxAmount = grossTotal * tax.taxRate / (100 + tax.taxRate);
-      
-      netSubtotal = grossSubtotal / (1 + tax.taxRate / 100);
-      netDiscount = discountAmountGross / (1 + tax.taxRate / 100);
-      grandTotal = grossTotal;
-    } else {
-      // Mode B — Prices EXCLUDE tax (tax-exclusive):
-      netSubtotal = grossSubtotal;
-      netDiscount = discountAmountGross;
-      const netTotalAfterDiscount = Math.max(0, netSubtotal - netDiscount);
-      taxAmount = netTotalAfterDiscount * tax.taxRate / 100;
-      grandTotal = netTotalAfterDiscount + taxAmount;
-    }
-  } else {
-    // No Tax mode
-    netSubtotal = grossSubtotal;
-    netDiscount = discountAmountGross;
-    taxAmount = 0;
-    grandTotal = Math.max(0, grossSubtotal - discountAmountGross);
-  }
-
-  // Apply updated tax inclusive formulas
-  if (tax.taxEnabled && tax.taxRate > 0) {
-    if (tax.taxInclusive) {
-      // Mode A — Prices INCLUDE tax (tax-inclusive):
-      const grossTotal = Math.max(0, grossSubtotal - discountAmountGross);
-      taxAmount = grossTotal * tax.taxRate / (100 + tax.taxRate);
-      netSubtotal = grossTotal - taxAmount;
-      grandTotal = grossTotal;
-      netDiscount = discountAmountGross;
-    } else {
-      // Mode B — Prices EXCLUDE tax (tax-exclusive):
-      netSubtotal = grossSubtotal;
-      netDiscount = discountAmountGross;
-      const netTotalAfterDiscount = Math.max(0, netSubtotal - netDiscount);
-      taxAmount = netTotalAfterDiscount * tax.taxRate / 100;
-      grandTotal = netTotalAfterDiscount + taxAmount;
-    }
-  } else {
-    // No Tax mode
-    netSubtotal = grossSubtotal;
-    netDiscount = discountAmountGross;
-    taxAmount = 0;
-    grandTotal = Math.max(0, grossSubtotal - discountAmountGross);
-  }
+  const taxRateName = tax.taxName || 'Tax';
 
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailAddress, setEmailAddress] = useState(draft.customer.email || '');
 
-  const handleDownloadPDF = async () => {
+  useEffect(() => {
+    if (draft.customer.email) {
+      setEmailAddress(draft.customer.email);
+    }
+  }, [draft.customer.email]);
+
+  const generatePDFBlob = async (): Promise<Blob | null> => {
     const element = document.getElementById('printable-invoice-canvas');
-    if (!element) return;
+    if (!element) return null;
 
-    try {
-      setIsGeneratingPDF(true);
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+    });
 
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4',
-      });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = imgWidth / imgHeight;
-      const computedHeight = pdfWidth / ratio;
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    
+    const imgWidth = canvas.width;
+    const imgHeight = canvas.height;
+    const ratio = imgWidth / imgHeight;
+    const computedHeight = pdfWidth / ratio;
 
-      let heightLeft = computedHeight;
-      let position = 0;
+    let heightLeft = computedHeight;
+    let position = 0;
 
+    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, computedHeight, '', 'FAST');
+    heightLeft -= pdfHeight;
+
+    while (heightLeft > 0) {
+      position = heightLeft - computedHeight;
+      pdf.addPage();
       pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, computedHeight, '', 'FAST');
       heightLeft -= pdfHeight;
+    }
 
-      while (heightLeft > 0) {
-        position = heightLeft - computedHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, computedHeight, '', 'FAST');
-        heightLeft -= pdfHeight;
-      }
+    return pdf.output('blob');
+  };
 
+  const handleDownloadPDF = async () => {
+    try {
+      setIsGeneratingPDF(true);
+      const blob = await generatePDFBlob();
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
       const invoiceNo = draft.metadata.invoiceNumber || 'draft';
-      pdf.save(`invoice-${invoiceNo}.pdf`);
+      a.download = `invoice-${invoiceNo}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('Error generating PDF:', err);
-      alert('Could not generate PDF. Please try again.');
+      console.error('Error downloading PDF:', err);
+      alert('Could not download PDF. Please try again.');
     } finally {
       setIsGeneratingPDF(false);
     }
+  };
+
+  const handleSharePDF = async () => {
+    try {
+      setIsGeneratingPDF(true);
+      const blob = await generatePDFBlob();
+      if (!blob) return;
+      const invoiceNo = draft.metadata.invoiceNumber || 'draft';
+      const file = new File([blob], `invoice-${invoiceNo}.pdf`, { type: 'application/pdf' });
+      
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Invoice #${invoiceNo}`,
+          text: `Please find attached Invoice #${invoiceNo}.`,
+        });
+      } else {
+        // Fallback to downloading
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `invoice-${invoiceNo}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+        alert('Web Share API with file attachments is not supported on this browser. The PDF has been downloaded to your device instead.');
+      }
+    } catch (err) {
+      console.error('Error sharing PDF:', err);
+      handleDownloadPDF();
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
+  const handleEmailMailto = () => {
+    const to = emailAddress.trim();
+    const invoiceNo = draft.metadata.invoiceNumber || 'draft';
+    const subject = encodeURIComponent(`Invoice #${invoiceNo} from ${profile.companyName || 'Us'}`);
+    const body = encodeURIComponent(
+      `Hello ${draft.customer.name || 'Customer'},\n\nPlease find attached our Invoice #${invoiceNo}.\n\nThank you for your business!\n\nBest regards,\n${profile.companyName || 'Us'}`
+    );
+    
+    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+    setShowEmailModal(false);
+    
+    // Trigger download automatically so they have the file ready to attach
+    handleDownloadPDF();
   };
 
   const handlePrint = () => {
@@ -169,7 +172,7 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
               <td className="py-2.5 px-3 text-right font-mono">{item.quantity}</td>
               <td className="py-2.5 px-3 text-right font-mono">{formatMoney(item.unitPrice, profile.currency.symbol)}</td>
               <td className="py-2.5 pl-3 text-right font-mono font-bold text-slate-900">
-                {formatMoney(item.quantity * item.unitPrice, profile.currency.symbol)}
+                {formatMoney(lineTotal(item), profile.currency.symbol)}
               </td>
             </tr>
           ))
@@ -433,6 +436,26 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
             <Eye className="w-3.5 h-3.5" />
             Print Preview (A4)
           </button>
+
+          <button
+            type="button"
+            onClick={handleSharePDF}
+            disabled={isGeneratingPDF}
+            id="preview-btn-share-pdf"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-400 transition-colors shadow-xs cursor-pointer min-h-[36px]"
+          >
+            {isGeneratingPDF ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <ExternalLink className="w-3.5 h-3.5" />
+                Share PDF
+              </>
+            )}
+          </button>
           
           <button
             type="button"
@@ -455,6 +478,56 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
           </button>
         </div>
       </div>
+
+      {/* Paid Invoice Actions Banner */}
+      {draft.status === 'Paid' && (
+        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 no-print animate-fadeIn" id="paid-actions-banner">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-100 text-emerald-800 rounded-full shrink-0">
+              <CheckCircle className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-emerald-950">Payment Received & Confirmed</h4>
+              <p className="text-xs text-emerald-700 mt-0.5">
+                This invoice has been marked as fully <strong className="uppercase font-bold text-emerald-800">Paid</strong>. Proceed to print or send an e-invoice PDF to your customer.
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowPrintPreview(true)}
+              id="paid-btn-proceed-print"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[36px]"
+            >
+              <Printer className="w-3.5 h-3.5 text-emerald-400" />
+              Proceed to Print
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSharePDF}
+              disabled={isGeneratingPDF}
+              id="paid-btn-share-pdf"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-400 transition-colors cursor-pointer min-h-[36px]"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Share PDF
+            </button>
+            
+            <button
+              type="button"
+              onClick={() => setShowEmailModal(true)}
+              id="paid-btn-send-email"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors cursor-pointer min-h-[36px]"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Email Invoice
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Warning if fields are blank */}
       {!draft.customer.name && (
@@ -1363,6 +1436,95 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
 
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ==================== E-INVOICE EMAIL MODAL ==================== */}
+      {showEmailModal && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn" id="email-invoice-modal-backdrop">
+          <div className="bg-white rounded-lg max-w-md w-full shadow-2xl border border-slate-150 overflow-hidden animate-scaleUp">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between text-slate-800">
+              <div className="flex items-center gap-2">
+                <Mail className="w-5 h-5 text-emerald-600 shrink-0" />
+                <h3 className="font-bold text-sm uppercase tracking-wide">Email PDF Invoice</h3>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowEmailModal(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={(e) => { e.preventDefault(); handleEmailMailto(); }} className="p-5 space-y-4">
+              <p className="text-xs text-slate-600 leading-normal font-sans">
+                Confirm your customer's email address below.
+              </p>
+
+              <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs p-3.5 rounded-lg space-y-1.5 leading-normal">
+                <p className="font-bold">⚠️ Note on PDF attachments:</p>
+                <p className="text-[11px] text-amber-800">
+                  Browser security regulations prevent web apps from attaching local files directly. 
+                  When you click <strong>Open Mail Client</strong>, we will trigger a download of the PDF invoice. Please attach that file to your email manually.
+                </p>
+              </div>
+
+              {/* Input field */}
+              <div className="space-y-1.5">
+                <label htmlFor="customer-email-field" className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Recipient Email Address
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Mail className="h-4 w-4 text-slate-400" />
+                  </span>
+                  <input
+                    id="customer-email-field"
+                    type="email"
+                    required
+                    value={emailAddress}
+                    onChange={(e) => setEmailAddress(e.target.value)}
+                    placeholder="customer@example.com"
+                    className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 text-slate-800 transition-all font-sans min-h-[38px]"
+                  />
+                </div>
+              </div>
+
+              {/* Details breakdown */}
+              <div className="bg-slate-50 p-3 rounded border border-slate-150 space-y-2 text-[11px] font-mono">
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-sans text-[9px] uppercase font-bold tracking-wide">Invoice Number:</span>
+                  <strong className="text-slate-800">#{draft.metadata.invoiceNumber || 'Draft'}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-sans text-[9px] uppercase font-bold tracking-wide">Client Name:</span>
+                  <strong className="text-slate-800">{draft.customer.name || 'N/A'}</strong>
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="pt-2 border-t border-slate-100 flex gap-2.5 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowEmailModal(false)}
+                  className="px-4 py-2 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 font-bold rounded text-xs transition-all cursor-pointer min-h-[36px]"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={!emailAddress.trim()}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold rounded text-xs transition-all shadow-sm flex items-center gap-1.5 cursor-pointer min-h-[36px] disabled:bg-slate-400 disabled:cursor-not-allowed"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  Open Mail Client
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

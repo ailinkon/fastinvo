@@ -44,6 +44,7 @@ export interface TaxConfig {
   taxEnabled: boolean; // false means "No Tax"
   taxRate: number; // e.g., 10 for 10%
   taxInclusive: boolean; // true = Mode A (prices include tax), false = Mode B (prices exclude tax)
+  taxName?: string; // Optional custom name shown on invoice, e.g. "VAT", "GST", "Tax"
 }
 
 export interface LineItem {
@@ -77,6 +78,8 @@ export interface InvoiceDraft {
   discountType: DiscountType;
   discountValue: number;
   status?: 'Paid' | 'Due';
+  paymentMethod?: string;
+  paidAmount?: number;
   mfsProvider?: string;
   mfsTrxId?: string;
   bankName?: string;

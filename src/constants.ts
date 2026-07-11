@@ -42,6 +42,7 @@ export const DEFAULT_TAX_CONFIG: TaxConfig = {
   taxEnabled: true,
   taxRate: 10,
   taxInclusive: false, // Mode B (prices EXCLUDE tax) by default
+  taxName: 'Tax',
 };
 
 export const getTodayDateString = (): string => {
@@ -67,11 +68,13 @@ export const DEFAULT_INVOICE_DRAFT = (nextNum: string): InvoiceDraft => ({
     email: '',
   },
   items: [
-    { id: '1', description: '', quantity: 0, unitPrice: 0 }
+    { id: '1', description: '', quantity: 1, unitPrice: 0 }
   ],
   discountType: 'percentage',
   discountValue: 0,
   status: 'Due',
+  paymentMethod: '',
+  paidAmount: 0,
   mfsTrxId: '',
   bankName: '',
   bankBranch: '',

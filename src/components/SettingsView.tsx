@@ -688,7 +688,7 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
 
             {tax.taxEnabled ? (
               <div className="space-y-4 animate-fade-in">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-1">
                     <label htmlFor="tax-rate-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Tax Rate (%)</label>
                     <div className="relative">
@@ -706,7 +706,7 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
                         <Percent className="w-3.5 h-3.5" />
                       </div>
                     </div>
-                    <p className="text-[9px] text-slate-400">Decimal values allowed (e.g. 12.5% VAT)</p>
+                    <p className="text-[9px] text-slate-400">Decimal values allowed</p>
                   </div>
 
                   <div className="space-y-1.5">
@@ -735,6 +735,19 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
                         Mode B (Exclusive)
                       </button>
                     </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="tax-name-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Tax Name (e.g. GST, VAT)</label>
+                    <input
+                      type="text"
+                      id="tax-name-input"
+                      value={tax.taxName || ''}
+                      onChange={(e) => handleTaxChange('taxName', e.target.value)}
+                      placeholder="Tax"
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 bg-white animate-fade-in"
+                    />
+                    <p className="text-[9px] text-slate-400">Label shown on totals panel</p>
                   </div>
                 </div>
 
