@@ -6,15 +6,15 @@
 import { Currency, BusinessProfile, TaxConfig, InvoiceDraft } from './types';
 
 export const POPULAR_CURRENCIES: Currency[] = [
-  { code: 'USD', symbol: '$', label: '$ USD (US Dollar)' },
-  { code: 'EUR', symbol: '€', label: '€ EUR (Euro)' },
-  { code: 'GBP', symbol: '£', label: '£ GBP (British Pound)' },
-  { code: 'AUD', symbol: '$', label: '$ AUD (Australian Dollar)' },
-  { code: 'CAD', symbol: '$', label: '$ CAD (Canadian Dollar)' },
-  { code: 'BDT', symbol: '৳', label: '৳ BDT (Bangladeshi Taka)' },
-  { code: 'INR', symbol: '₹', label: '₹ INR (Indian Rupee)' },
-  { code: 'JPY', symbol: '¥', label: '¥ JPY (Japanese Yen)' },
-  { code: 'SGD', symbol: '$', label: '$ SGD (Singapore Dollar)' },
+  { code: 'USD', symbol: '$', label: '$ USD (US Dollar)', locale: 'en-US', symbolPlacement: 'before', decimalPlaces: 2 },
+  { code: 'EUR', symbol: '€', label: '€ EUR (Euro)', locale: 'de-DE', symbolPlacement: 'after-space', decimalPlaces: 2 },
+  { code: 'GBP', symbol: '£', label: '£ GBP (British Pound)', locale: 'en-GB', symbolPlacement: 'before', decimalPlaces: 2 },
+  { code: 'AUD', symbol: '$', label: '$ AUD (Australian Dollar)', locale: 'en-AU', symbolPlacement: 'before', decimalPlaces: 2 },
+  { code: 'CAD', symbol: '$', label: '$ CAD (Canadian Dollar)', locale: 'en-CA', symbolPlacement: 'before', decimalPlaces: 2 },
+  { code: 'BDT', symbol: '৳', label: '৳ BDT (Bangladeshi Taka)', locale: 'bn-BD', symbolPlacement: 'before-space', decimalPlaces: 2 },
+  { code: 'INR', symbol: '₹', label: '₹ INR (Indian Rupee)', locale: 'en-IN', symbolPlacement: 'before-space', decimalPlaces: 2 },
+  { code: 'JPY', symbol: '¥', label: '¥ JPY (Japanese Yen)', locale: 'ja-JP', symbolPlacement: 'before', decimalPlaces: 0 },
+  { code: 'SGD', symbol: '$', label: '$ SGD (Singapore Dollar)', locale: 'en-SG', symbolPlacement: 'before', decimalPlaces: 2 },
 ];
 
 export const DEFAULT_PROFILE: BusinessProfile = {
@@ -26,7 +26,7 @@ export const DEFAULT_PROFILE: BusinessProfile = {
   website: '',
   taxRegLabel: 'VAT No.',
   taxRegNumber: '',
-  currency: { code: 'USD', symbol: '$', label: '$ USD (US Dollar)' },
+  currency: { code: 'USD', symbol: '$', label: '$ USD (US Dollar)', locale: 'en-US', symbolPlacement: 'before', decimalPlaces: 2 },
   invoicePrefix: 'INV-',
   nextInvoiceNumber: 1001,
   template: 'minimalist',
@@ -85,15 +85,39 @@ export const DEFAULT_INVOICE_DRAFT = (nextNum: string): InvoiceDraft => ({
 /**
  * Currency formatter helper
  */
-export function formatMoney(amount: number, currencySymbol: string): string {
-  // Prevent floating point anomalies (e.g. 0.1 + 0.2 = 0.30000000000000004)
-  const roundedAmount = Math.round((amount + Number.EPSILON) * 100) / 100;
-  
-  // Format with thousand separators and always 2 decimal places
-  const formatted = roundedAmount.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+export function formatMoney(amount: number, currency: Currency | string): string {
+  if (typeof currency === 'string') {
+    // backward compatibility or raw symbol fallback
+    const roundedAmount = Math.round((amount + Number.EPSILON) * 100) / 100;
+    const formatted = roundedAmount.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${currency}${formatted}`;
+  }
+
+  const decimals = currency.decimalPlaces !== undefined ? currency.decimalPlaces : 2;
+  const factor = Math.pow(10, decimals);
+  const roundedAmount = Math.round((amount + Number.EPSILON) * factor) / factor;
+
+  const locale = currency.locale || 'en-US';
+  const formatted = roundedAmount.toLocaleString(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   });
-  
-  return `${currencySymbol}${formatted}`;
+
+  const symbol = currency.symbol || '';
+  const placement = currency.symbolPlacement || 'before';
+
+  switch (placement) {
+    case 'after':
+      return `${formatted}${symbol}`;
+    case 'after-space':
+      return `${formatted} ${symbol}`;
+    case 'before-space':
+      return `${symbol} ${formatted}`;
+    case 'before':
+    default:
+      return `${symbol}${formatted}`;
+  }
 }

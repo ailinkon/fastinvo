@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Building2, 
   Receipt, 
@@ -20,10 +20,12 @@ import {
   MapPin,
   CreditCard,
   Wallet,
-  Smartphone
+  Smartphone,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { BusinessProfile, TaxConfig, Currency } from '../types';
-import { POPULAR_CURRENCIES } from '../constants';
+import { POPULAR_CURRENCIES, formatMoney } from '../constants';
 
 interface SettingsViewProps {
   profile: BusinessProfile;
@@ -31,6 +33,8 @@ interface SettingsViewProps {
   tax: TaxConfig;
   setTax: (tax: TaxConfig) => void;
   onSave?: () => void;
+  isDark?: boolean;
+  onToggleTheme?: () => void;
 }
 
 const MFS_OPTIONS = ['Bkash', 'Celsin', 'Nagad', 'Rocket', 'Upay', 'M-Cash'];
@@ -43,7 +47,19 @@ const PAYMENT_METHOD_OPTIONS = [
   { id: 'MFS merchant pay', name: 'MFS merchant pay', desc: 'Mobile merchant counter payment' }
 ];
 
-export default function SettingsView({ profile, setProfile, tax, setTax, onSave }: SettingsViewProps) {
+const LOCALES_OPTIONS = [
+  { value: 'en-US', label: 'US/Generic (1,234.56)' },
+  { value: 'en-GB', label: 'UK (1,234.56)' },
+  { value: 'de-DE', label: 'German/Euro (1.234,56)' },
+  { value: 'fr-FR', label: 'French (1 234,56)' },
+  { value: 'bn-BD', label: 'Bangladesh (1,234.56)' },
+  { value: 'en-IN', label: 'India Lakh/Crore (12,345.67)' },
+  { value: 'ja-JP', label: 'Japan (No decimals, 1,234)' },
+  { value: 'es-ES', label: 'Spanish (1.234,56)' },
+  { value: 'it-IT', label: 'Italian (1.234,56)' },
+];
+
+export default function SettingsView({ profile, setProfile, tax, setTax, onSave, isDark, onToggleTheme }: SettingsViewProps) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -68,6 +84,44 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
   
   const [customCode, setCustomCode] = useState(profile.currency.code);
   const [customSymbol, setCustomSymbol] = useState(profile.currency.symbol);
+
+  // Advanced currency support states
+  const currentLocale = profile.currency.locale || 'en-US';
+  const isCustomLocale = !LOCALES_OPTIONS.some(o => o.value === currentLocale);
+  const [customLocaleInput, setCustomLocaleInput] = useState(isCustomLocale ? currentLocale : '');
+
+  useEffect(() => {
+    const isCustom = !LOCALES_OPTIONS.some(o => o.value === (profile.currency.locale || 'en-US'));
+    if (isCustom) {
+      setCustomLocaleInput(profile.currency.locale || 'en-US');
+    }
+  }, [profile.currency.locale]);
+
+  const handleCurrencyFieldChange = (field: 'locale' | 'symbolPlacement' | 'decimalPlaces', val: any) => {
+    const updatedCur: Currency = {
+      ...profile.currency,
+      [field]: val
+    };
+    handleProfileChange('currency', updatedCur);
+  };
+
+  const handleLocaleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (val === 'CUSTOM') {
+      const defaultCustom = customLocaleInput || 'en-US';
+      handleCurrencyFieldChange('locale', defaultCustom);
+    } else {
+      handleCurrencyFieldChange('locale', val);
+    }
+  };
+
+  const handleCustomLocaleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.trim();
+    setCustomLocaleInput(val);
+    if (val) {
+      handleCurrencyFieldChange('locale', val);
+    }
+  };
 
   // Handle text field changes for profile
   const handleProfileChange = (key: keyof BusinessProfile, value: any) => {
@@ -150,7 +204,10 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
       const newCurrency: Currency = {
         code: customCode || 'CUSTOM',
         symbol: customSymbol || '¤',
-        label: 'Custom Currency'
+        label: 'Custom Currency',
+        locale: 'en-US',
+        symbolPlacement: 'before',
+        decimalPlaces: 2
       };
       handleProfileChange('currency', newCurrency);
     } else {
@@ -169,7 +226,10 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
       const updatedCur: Currency = {
         code: codeUpper,
         symbol: customSymbol,
-        label: 'Custom Currency'
+        label: 'Custom Currency',
+        locale: profile.currency.locale || 'en-US',
+        symbolPlacement: profile.currency.symbolPlacement || 'before',
+        decimalPlaces: profile.currency.decimalPlaces !== undefined ? profile.currency.decimalPlaces : 2
       };
       handleProfileChange('currency', updatedCur);
     } else {
@@ -177,7 +237,10 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
       const updatedCur: Currency = {
         code: customCode,
         symbol: val,
-        label: 'Custom Currency'
+        label: 'Custom Currency',
+        locale: profile.currency.locale || 'en-US',
+        symbolPlacement: profile.currency.symbolPlacement || 'before',
+        decimalPlaces: profile.currency.decimalPlaces !== undefined ? profile.currency.decimalPlaces : 2
       };
       handleProfileChange('currency', updatedCur);
     }
@@ -393,6 +456,91 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
                   </div>
                 </div>
               )}
+
+              {/* Advanced Currency Formatting Options */}
+              <div className="sm:col-span-2 border-t border-slate-150 pt-4 mt-2 space-y-4">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <Globe className="w-4 h-4 text-blue-500" />
+                  <h4 className="text-xs font-bold uppercase tracking-wider">
+                    Advanced formatting settings
+                  </h4>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Locale Dropdown */}
+                  <div className="space-y-1">
+                    <label htmlFor="locale-select" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Locale / Number Format</label>
+                    <select
+                      id="locale-select"
+                      value={isCustomLocale ? 'CUSTOM' : (profile.currency.locale || 'en-US')}
+                      onChange={handleLocaleSelect}
+                      className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 transition-all cursor-pointer"
+                    >
+                      {LOCALES_OPTIONS.map((loc) => (
+                        <option key={loc.value} value={loc.value}>{loc.label}</option>
+                      ))}
+                      <option value="CUSTOM">Custom IETF Code...</option>
+                    </select>
+                  </div>
+
+                  {/* Symbol Placement */}
+                  <div className="space-y-1">
+                    <label htmlFor="placement-select" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Symbol Placement</label>
+                    <select
+                      id="placement-select"
+                      value={profile.currency.symbolPlacement || 'before'}
+                      onChange={(e) => handleCurrencyFieldChange('symbolPlacement', e.target.value as any)}
+                      className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 transition-all cursor-pointer"
+                    >
+                      <option value="before">Before ($100.00)</option>
+                      <option value="before-space">Before with Space ($ 100.00)</option>
+                      <option value="after">After (100.00$)</option>
+                      <option value="after-space">After with Space (100.00 $)</option>
+                    </select>
+                  </div>
+
+                  {/* Decimal Places */}
+                  <div className="space-y-1">
+                    <label htmlFor="decimal-select" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Decimal Places</label>
+                    <select
+                      id="decimal-select"
+                      value={profile.currency.decimalPlaces !== undefined ? String(profile.currency.decimalPlaces) : '2'}
+                      onChange={(e) => handleCurrencyFieldChange('decimalPlaces', parseInt(e.target.value))}
+                      className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 transition-all cursor-pointer"
+                    >
+                      <option value="0">0 (e.g., $100)</option>
+                      <option value="1">1 (e.g., $100.0)</option>
+                      <option value="2">2 (e.g., $100.00)</option>
+                      <option value="3">3 (e.g., $100.000)</option>
+                      <option value="4">4 (e.g., $100.0000)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Custom Locale Text Input */}
+                {isCustomLocale && (
+                  <div className="space-y-1 max-w-xs animate-fadeIn">
+                    <label htmlFor="custom-locale-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Custom IETF Locale Tag</label>
+                    <input
+                      type="text"
+                      id="custom-locale-input"
+                      value={customLocaleInput}
+                      onChange={handleCustomLocaleInputChange}
+                      placeholder="e.g. sv-SE, nl-NL"
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 placeholder-slate-400 transition-all bg-white"
+                    />
+                    <p className="text-[9px] text-slate-400 leading-tight">Must be a valid BCP 47 language tag (e.g., de-CH, en-IE) to support custom formatting.</p>
+                  </div>
+                )}
+
+                {/* Preview / Sample format */}
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-200/60 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Live formatting preview</span>
+                  <strong className="text-sm font-mono text-slate-900 font-black bg-white px-2.5 py-1 rounded border border-slate-200 shadow-sm">
+                    {formatMoney(1234567.89, profile.currency)}
+                  </strong>
+                </div>
+              </div>
 
               <div className="grid grid-cols-2 gap-2 sm:col-span-2">
                 <div className="space-y-1">
@@ -784,6 +932,59 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave 
                 Tax lines are hidden. Tax rate is considered 0%, and no tax calculations will be added to subtotals.
               </div>
             )}
+          </div>
+
+          {/* Card 4: Appearance Settings */}
+          <div className="bg-white rounded border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4" id="settings-theme-card">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Sun className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+                <h3 className="text-xs uppercase tracking-wider text-slate-500 font-bold">App Appearance</h3>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Theme Preference</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Switch between light and dark modes to suit your working environment.
+                </p>
+              </div>
+
+              {/* Elegant Button Style Theme Toggle */}
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-150 dark:border-slate-750 w-full sm:w-auto" id="theme-selector-options">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isDark && onToggleTheme) onToggleTheme();
+                  }}
+                  id="theme-select-light"
+                  className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 py-1.5 px-4 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                    !isDark
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Sun className="w-3.5 h-3.5" />
+                  Light Mode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isDark && onToggleTheme) onToggleTheme();
+                  }}
+                  id="theme-select-dark"
+                  className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 py-1.5 px-4 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                    isDark
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Moon className="w-3.5 h-3.5" />
+                  Dark Mode
+                </button>
+              </div>
+            </div>
           </div>
 
         </div>

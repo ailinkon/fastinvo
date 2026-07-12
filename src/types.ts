@@ -7,6 +7,9 @@ export interface Currency {
   code: string;
   symbol: string;
   label: string;
+  locale?: string;
+  symbolPlacement?: 'before' | 'after' | 'before-space' | 'after-space';
+  decimalPlaces?: number;
 }
 
 export type InvoiceTemplateId = 'minimalist' | 'modern-blue' | 'editorial-serif' | 'compact-slate' | 'bold-accent';

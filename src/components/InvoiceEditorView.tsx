@@ -37,6 +37,96 @@ const PAYMENT_METHOD_OPTIONS = [
   { id: 'MFS merchant pay', name: 'MFS merchant pay', desc: 'Mobile merchant counter payment' }
 ];
 
+interface AmountInputProps {
+  value: number;
+  onChange: (val: number) => void;
+  className?: string;
+  id?: string;
+  autoFocus?: boolean;
+  decimalPlaces?: number;
+  locale?: string;
+  placeholder?: string;
+  dataRowIndex?: number;
+  dataCellType?: string;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+}
+
+function AmountInput({
+  value,
+  onChange,
+  className = '',
+  id,
+  autoFocus = false,
+  decimalPlaces = 2,
+  locale = 'en-US',
+  placeholder = '0.00',
+  dataRowIndex,
+  dataCellType,
+  onKeyDown,
+}: AmountInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const formatDisplay = (num: number): string => {
+    return num.toLocaleString(locale, {
+      minimumFractionDigits: decimalPlaces,
+      maximumFractionDigits: decimalPlaces,
+    });
+  };
+
+  const displayValue = formatDisplay(value);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawStr = e.target.value;
+    const digits = rawStr.replace(/\D/g, '');
+    
+    if (digits === '') {
+      onChange(0);
+      return;
+    }
+    
+    const parsedInt = parseInt(digits, 10);
+    const factor = Math.pow(10, decimalPlaces);
+    const newValue = parsedInt / factor;
+    
+    onChange(newValue);
+  };
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    if (document.activeElement === input) {
+      const length = input.value.length;
+      if (input.selectionStart === 0 && input.selectionEnd === length) {
+        return;
+      }
+      input.setSelectionRange(length, length);
+    }
+  }, [displayValue]);
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.target.select();
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="numeric"
+      id={id}
+      value={displayValue}
+      onChange={handleChange}
+      onKeyDown={onKeyDown}
+      onFocus={handleFocus}
+      className={className}
+      placeholder={placeholder}
+      data-row-index={dataRowIndex}
+      data-cell-type={dataCellType}
+      autoFocus={autoFocus}
+    />
+  );
+}
+
 interface InvoiceEditorViewProps {
   draft: InvoiceDraft;
   setDraft: (draft: InvoiceDraft | ((prev: InvoiceDraft) => InvoiceDraft)) => void;
@@ -135,7 +225,7 @@ export default function InvoiceEditorView({
     setPaymentNotice(`Proceeding to take payment via ${methodName}!`);
     setTimeout(() => setPaymentNotice(null), 5000);
     
-    if (methodId.toLowerCase().includes('mfs')) {
+    if ((methodId || '').toLowerCase().includes('mfs')) {
       setPaymentSubTab('mfs');
     } else {
       setPaymentSubTab('instructions');
@@ -235,6 +325,7 @@ export default function InvoiceEditorView({
 
   // Checkout / Payment Wizard action handlers
   const handleProceedToPaymentClick = () => {
+    if (isInvoiceEmpty) return;
     // Validate customer first
     const newErrors: Record<string, string> = {};
     if (!draft.customer.name.trim()) {
@@ -312,7 +403,7 @@ export default function InvoiceEditorView({
 
     const methodStrings = entries.map(e => {
       const methodName = e.method === 'MFS' ? `MFS (${splitMfsWallet})` : e.method;
-      return `${methodName} (${formatMoney(e.amt, profile.currency.symbol)})`;
+      return `${methodName} (${formatMoney(e.amt, profile.currency)})`;
     });
 
     const finalMethodDesc = methodStrings.length > 0 ? methodStrings.join(' + ') : 'Unpaid';
@@ -349,6 +440,8 @@ export default function InvoiceEditorView({
   const { subtotal: netSubtotal, discount: netDiscount, taxAmount, grandTotal } =
     calculateInvoiceTotals(draft.items, draft.discountType, draft.discountValue, tax);
 
+  const isInvoiceEmpty = validItems.length === 0 || grandTotal <= 0;
+
   // Handle draft fields change
   const handleMetadataChange = (key: keyof typeof draft.metadata, value: string) => {
     setDraft({
@@ -366,7 +459,7 @@ export default function InvoiceEditorView({
     if (key === 'status' && value === 'Paid') {
       const clientName = draft.customer.name.trim();
       if (clientName) {
-        const alreadySaved = clients.some(c => c.name.toLowerCase() === clientName.toLowerCase() || (draft.customer.email?.trim() && c.email?.toLowerCase() === draft.customer.email.trim().toLowerCase()));
+        const alreadySaved = clients.some(c => (c.name || '').toLowerCase() === clientName.toLowerCase() || (draft.customer.email?.trim() && (c.email || '').toLowerCase() === draft.customer.email.trim().toLowerCase()));
         if (!alreadySaved) {
           setShowSaveClientPrompt(true);
         }
@@ -410,6 +503,7 @@ export default function InvoiceEditorView({
   };
 
   const handlePreviewClick = () => {
+    if (isInvoiceEmpty) return;
     const newErrors: Record<string, string> = {};
     if (!draft.customer.name.trim()) {
       newErrors.customerName = 'Customer Name is required';
@@ -610,8 +704,8 @@ export default function InvoiceEditorView({
           <div className="flex items-center gap-3">
             <CreditCard className="w-5 h-5 text-blue-400" />
             <div>
-              <h2 className="font-extrabold text-sm uppercase tracking-wider">FastInvo Secure Checkout</h2>
-              <p className="text-[10px] text-slate-400">Specify payment type & capture details</p>
+              <h2 className="font-extrabold text-sm uppercase tracking-wider">RECORD PAYMENT</h2>
+              <p className="text-[10px] text-slate-400">Log how the customer paid</p>
             </div>
           </div>
           <button
@@ -629,7 +723,7 @@ export default function InvoiceEditorView({
             <div className="text-center bg-slate-50 p-5 rounded-xl border border-slate-150/60 shadow-xs">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Bill Amount</span>
               <span className="text-2xl font-black text-slate-900 font-mono tracking-tight mt-1 block">
-                {formatMoney(grandTotal, profile.currency.symbol)}
+                {formatMoney(grandTotal, profile.currency)}
               </span>
             </div>
 
@@ -741,7 +835,7 @@ export default function InvoiceEditorView({
               {/* Bill vs Paid Info */}
               <div className="flex justify-between items-center text-xs font-semibold border-b border-slate-200/80 pb-3">
                 <span className="text-slate-500 font-sans">Total Bill Amount</span>
-                <span className="font-mono text-slate-900 font-black text-sm">{formatMoney(grandTotal, profile.currency.symbol)}</span>
+                <span className="font-mono text-slate-900 font-black text-sm">{formatMoney(grandTotal, profile.currency)}</span>
               </div>
 
               {/* Dynamic calculated Sum Total Received */}
@@ -762,7 +856,7 @@ export default function InvoiceEditorView({
                     </div>
                     <div className="text-right">
                       <span className="font-mono font-black text-lg text-blue-900">
-                        {formatMoney(totalSplitReceived, profile.currency.symbol)}
+                        {formatMoney(totalSplitReceived, profile.currency)}
                       </span>
                     </div>
                   </div>
@@ -841,19 +935,17 @@ export default function InvoiceEditorView({
 
                         {/* Relative Input field with currency symbol */}
                         <div className="relative">
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            placeholder="0.00"
-                            value={val}
-                            onChange={(e) => {
-                              const text = e.target.value;
+                          <AmountInput
+                            value={parseFloat(val) || 0}
+                            onChange={(newValue) => {
                               setSplitAmounts(prev => ({
                                 ...prev,
-                                [opt.id]: text
+                                [opt.id]: newValue === 0 ? '' : String(newValue)
                               }));
                             }}
+                            decimalPlaces={profile.currency.decimalPlaces}
+                            locale={profile.currency.locale}
+                            placeholder="0.00"
                             className="w-full pr-8 pl-3.5 py-2 border border-slate-250 rounded-lg text-xs font-mono font-bold text-slate-900 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                           />
                           <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400 font-mono font-bold text-xs">
@@ -907,7 +999,7 @@ export default function InvoiceEditorView({
                     <div className="flex justify-between items-center font-sans">
                       <span className="font-semibold text-slate-500">Amount Received (Total)</span>
                       <span className="font-mono font-bold text-slate-800">
-                        {formatMoney(totalSplitReceived, profile.currency.symbol)}
+                        {formatMoney(totalSplitReceived, profile.currency)}
                       </span>
                     </div>
                     
@@ -917,7 +1009,7 @@ export default function InvoiceEditorView({
                           <div className="flex justify-between items-center text-emerald-700 font-semibold border-t border-slate-100 pt-2 font-sans">
                             <span>Change to Return</span>
                             <span className="font-mono font-black text-sm">
-                              {formatMoney(totalSplitReceived - grandTotal, profile.currency.symbol)}
+                              {formatMoney(totalSplitReceived - grandTotal, profile.currency)}
                             </span>
                           </div>
                         );
@@ -926,7 +1018,7 @@ export default function InvoiceEditorView({
                           <div className="flex justify-between items-center text-amber-700 font-semibold border-t border-slate-100 pt-2 font-sans">
                             <span>Remaining Balance Due</span>
                             <span className="font-mono font-black text-sm">
-                              {formatMoney(grandTotal - totalSplitReceived, profile.currency.symbol)}
+                              {formatMoney(grandTotal - totalSplitReceived, profile.currency)}
                             </span>
                           </div>
                         );
@@ -992,11 +1084,11 @@ export default function InvoiceEditorView({
             {/* Header with chosen payment method icon */}
             <div className="text-center space-y-2">
               <div className="inline-flex items-center justify-center p-3.5 bg-blue-50 border border-blue-100 rounded-full">
-                {selectedPaymentMethodOption.toLowerCase().includes('cash') ? (
+                {(selectedPaymentMethodOption || '').toLowerCase().includes('cash') ? (
                   <Coins className="w-6 h-6 text-emerald-500" />
-                ) : selectedPaymentMethodOption.toLowerCase().includes('bank') ? (
+                ) : (selectedPaymentMethodOption || '').toLowerCase().includes('bank') ? (
                   <Building2 className="w-6 h-6 text-blue-500" />
-                ) : selectedPaymentMethodOption.toLowerCase().includes('eft') ? (
+                ) : (selectedPaymentMethodOption || '').toLowerCase().includes('eft') ? (
                   <CreditCard className="w-6 h-6 text-purple-500" />
                 ) : (
                   <Smartphone className="w-6 h-6 text-indigo-500" />
@@ -1012,7 +1104,7 @@ export default function InvoiceEditorView({
               {/* Bill vs Paid Info */}
               <div className="flex justify-between items-center text-xs font-semibold border-b border-slate-200/80 pb-3">
                 <span className="text-slate-500">Total Bill Amount</span>
-                <span className="font-mono text-slate-900 font-black text-sm">{formatMoney(grandTotal, profile.currency.symbol)}</span>
+                <span className="font-mono text-slate-900 font-black text-sm">{formatMoney(grandTotal, profile.currency)}</span>
               </div>
 
               {/* Amount input box */}
@@ -1030,17 +1122,15 @@ export default function InvoiceEditorView({
                   </button>
                 </div>
                 <div className="relative">
-                  <input
-                    type="number"
+                  <AmountInput
                     id="checkout-amount-received"
-                    step="any"
-                    min="0"
-                    value={tempPartialAmount}
-                    onChange={(e) => setTempPartialAmount(e.target.value)}
+                    value={parseFloat(tempPartialAmount) || 0}
+                    onChange={(val) => setTempPartialAmount(String(val))}
+                    decimalPlaces={profile.currency.decimalPlaces}
+                    locale={profile.currency.locale}
                     placeholder="0.00"
                     className="w-full pr-8 pl-3.5 py-3 border border-slate-300 rounded-xl text-sm font-mono font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-xs"
                     autoFocus
-                    onFocus={(e) => e.target.select()}
                   />
                   <div className="absolute inset-y-0 right-0 flex items-center pr-3.5 pointer-events-none text-slate-400 font-mono font-bold text-sm">
                     {profile.currency.symbol}
@@ -1053,7 +1143,7 @@ export default function InvoiceEditorView({
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-slate-500">Amount Received</span>
                   <span className="font-mono font-bold text-slate-800">
-                    {formatMoney(parseFloat(tempPartialAmount) || 0, profile.currency.symbol)}
+                    {formatMoney(parseFloat(tempPartialAmount) || 0, profile.currency)}
                   </span>
                 </div>
                 
@@ -1064,7 +1154,7 @@ export default function InvoiceEditorView({
                       <div className="flex justify-between items-center text-emerald-700 font-semibold border-t border-slate-100 pt-2">
                         <span>Change to Return</span>
                         <span className="font-mono font-black text-sm">
-                          {formatMoney(val - grandTotal, profile.currency.symbol)}
+                          {formatMoney(val - grandTotal, profile.currency)}
                         </span>
                       </div>
                     );
@@ -1073,7 +1163,7 @@ export default function InvoiceEditorView({
                       <div className="flex justify-between items-center text-amber-700 font-semibold border-t border-slate-100 pt-2">
                         <span>Remaining Balance Due</span>
                         <span className="font-mono font-black text-sm">
-                          {formatMoney(grandTotal - val, profile.currency.symbol)}
+                          {formatMoney(grandTotal - val, profile.currency)}
                         </span>
                       </div>
                     );
@@ -1135,19 +1225,19 @@ export default function InvoiceEditorView({
         {paymentStep === 'summary' && (
           <div className="p-6 space-y-6 animate-fadeIn">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center border-b border-slate-100 pb-3">
-              Invoice Checkout Summary
+              Invoice Payment Summary
             </h3>
 
             {/* Calculations display */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3.5 font-sans text-xs shadow-xs">
               <div className="flex justify-between items-center text-slate-500 font-semibold">
                 <span>Bill Amount</span>
-                <span className="font-mono text-slate-850 font-bold">{formatMoney(grandTotal, profile.currency.symbol)}</span>
+                <span className="font-mono text-slate-850 font-bold">{formatMoney(grandTotal, profile.currency)}</span>
               </div>
               <div className="flex justify-between items-center text-slate-500 font-semibold">
                 <span>Paid Amount</span>
                 <span className="font-mono text-slate-850 font-bold">
-                  {formatMoney(draft.paidAmount || 0, profile.currency.symbol)}
+                  {formatMoney(draft.paidAmount || 0, profile.currency)}
                 </span>
               </div>
               
@@ -1158,7 +1248,7 @@ export default function InvoiceEditorView({
                       Change Amount
                     </span>
                     <span className="font-mono font-black text-emerald-600 text-sm">
-                      {formatMoney((draft.paidAmount || 0) - grandTotal, profile.currency.symbol)}
+                      {formatMoney((draft.paidAmount || 0) - grandTotal, profile.currency)}
                     </span>
                   </>
                 ) : (
@@ -1167,7 +1257,7 @@ export default function InvoiceEditorView({
                       Remaining Due
                     </span>
                     <span className="font-mono font-black text-red-600 text-sm">
-                      {formatMoney(grandTotal - (draft.paidAmount || 0), profile.currency.symbol)}
+                      {formatMoney(grandTotal - (draft.paidAmount || 0), profile.currency)}
                     </span>
                   </>
                 )}
@@ -1199,9 +1289,15 @@ export default function InvoiceEditorView({
                   type="date"
                   id="checkout-due-date"
                   value={draft.metadata.dueDate || ''}
+                  min={draft.metadata.issueDate}
                   onChange={(e) => handleMetadataChange('dueDate', e.target.value)}
                   className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 text-slate-800 font-sans"
                 />
+                {draft.metadata.dueDate && draft.metadata.dueDate < draft.metadata.issueDate && (
+                  <p className="text-[11px] text-red-600 font-bold mt-1">
+                    Due date is before issue date
+                  </p>
+                )}
                 <p className="text-[10px] text-amber-700">Select the date on which this partial remainder is expected.</p>
               </div>
             )}
@@ -1271,8 +1367,13 @@ export default function InvoiceEditorView({
           <button
             type="button"
             onClick={handlePreviewClick}
+            disabled={isInvoiceEmpty}
             id="editor-btn-preview"
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 transition-all shadow-sm cursor-pointer min-h-[44px]"
+            className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-all shadow-sm min-h-[44px] ${
+              isInvoiceEmpty
+                ? 'bg-slate-250 text-slate-400 border border-slate-200 cursor-not-allowed'
+                : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 cursor-pointer'
+            }`}
           >
             <Eye className="w-3.5 h-3.5" />
             Preview Invoice
@@ -1314,7 +1415,7 @@ export default function InvoiceEditorView({
               <h3 className="text-xs uppercase tracking-wider text-slate-500 font-bold">Document Details</h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-1">
                 <label htmlFor="invoice-number-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Invoice Number</label>
                 <input
@@ -1336,6 +1437,23 @@ export default function InvoiceEditorView({
                   onChange={(e) => handleMetadataChange('issueDate', e.target.value)}
                   className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 transition-all"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="invoice-due-date-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Due Date <span className="text-slate-400 text-[10px] font-normal">(Optional)</span></label>
+                <input
+                  type="date"
+                  id="invoice-due-date-input"
+                  value={draft.metadata.dueDate || ''}
+                  min={draft.metadata.issueDate}
+                  onChange={(e) => handleMetadataChange('dueDate', e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 transition-all"
+                />
+                {draft.metadata.dueDate && draft.metadata.dueDate < draft.metadata.issueDate && (
+                  <p className="text-[11px] text-red-600 font-bold mt-1">
+                    Due date is before issue date
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1736,17 +1854,16 @@ export default function InvoiceEditorView({
                         {/* Unit Price field */}
                         <td className="py-2 px-2">
                           <div className="relative">
-                            <input
-                              type="number"
-                              min="0"
-                              step="any"
-                              value={item.unitPrice || ''}
-                              data-row-index={index}
-                              data-cell-type="unitPrice"
-                              onChange={(e) => handleItemChange(index, 'unitPrice', e.target.value)}
+                            <AmountInput
+                              value={item.unitPrice || 0}
+                              onChange={(val) => handleItemChange(index, 'unitPrice', String(val))}
                               onKeyDown={(e) => handleKeyDown(e, index, 'unitPrice')}
+                              decimalPlaces={profile.currency.decimalPlaces}
+                              locale={profile.currency.locale}
                               placeholder="0.00"
                               className="w-full bg-transparent py-1 px-1.5 text-right border border-transparent rounded hover:border-slate-200 focus:border-blue-500 focus:bg-white focus:outline-none text-sm text-slate-800 font-mono transition-all"
+                              dataRowIndex={index}
+                              dataCellType="unitPrice"
                             />
                             {errors[`price-${index}`] && (
                               <span className="absolute right-0 top-7 text-[9px] text-red-500 whitespace-nowrap bg-white px-1 border border-red-100 rounded shadow-xs z-10">{errors[`price-${index}`]}</span>
@@ -1756,7 +1873,7 @@ export default function InvoiceEditorView({
 
                         {/* Auto-calculated line total */}
                         <td className="py-2 pl-3 text-right text-sm font-semibold text-slate-700 font-mono">
-                          {formatMoney(rowTotal, profile.currency.symbol)}
+                          {formatMoney(rowTotal, profile.currency)}
                         </td>
 
                         {/* Delete button */}
@@ -1840,7 +1957,7 @@ export default function InvoiceEditorView({
                   {/* Gross Subtotal */}
                   <div className="flex justify-between text-xs text-slate-500">
                     <span>Subtotal (Gross)</span>
-                    <span className="font-mono font-medium">{formatMoney(grossSubtotal, profile.currency.symbol)}</span>
+                    <span className="font-mono font-medium">{formatMoney(grossSubtotal, profile.currency)}</span>
                   </div>
 
                   {/* Discount input section */}
@@ -1878,7 +1995,7 @@ export default function InvoiceEditorView({
                     {draft.discountValue > 0 && (
                       <div className="flex justify-between text-xs text-red-600 font-semibold">
                         <span>Discount Applied (Gross)</span>
-                        <span className="font-mono">-{formatMoney(netDiscount, profile.currency.symbol)}</span>
+                        <span className="font-mono">-{formatMoney(netDiscount, profile.currency)}</span>
                       </div>
                     )}
                   </div>
@@ -1886,13 +2003,13 @@ export default function InvoiceEditorView({
                   {/* Net Subtotal */}
                   <div className="flex justify-between text-xs text-slate-500 border-t border-slate-50/50 pt-2 font-medium">
                     <span>Net Subtotal (Excl. Tax)</span>
-                    <span className="font-mono">{formatMoney(netSubtotal, profile.currency.symbol)}</span>
+                    <span className="font-mono">{formatMoney(netSubtotal, profile.currency)}</span>
                   </div>
 
                   {/* Extracted Tax */}
                   <div className="flex justify-between text-xs text-slate-500">
                     <span>{tax.taxName || 'Tax'} ({tax.taxRate}% Included)</span>
-                    <span className="font-mono font-medium">{formatMoney(taxAmount, profile.currency.symbol)}</span>
+                    <span className="font-mono font-medium">{formatMoney(taxAmount, profile.currency)}</span>
                   </div>
                 </>
               ) : (
@@ -1900,7 +2017,7 @@ export default function InvoiceEditorView({
                   {/* Standard Exclusive or No Tax mode */}
                   <div className="flex justify-between text-xs text-slate-500">
                     <span>Subtotal</span>
-                    <span className="font-mono font-medium">{formatMoney(grossSubtotal, profile.currency.symbol)}</span>
+                    <span className="font-mono font-medium">{formatMoney(grossSubtotal, profile.currency)}</span>
                   </div>
 
                   {/* Discount input section */}
@@ -1938,7 +2055,7 @@ export default function InvoiceEditorView({
                     {draft.discountValue > 0 && (
                       <div className="flex justify-between text-xs text-red-600 font-semibold">
                         <span>Discount Applied</span>
-                        <span className="font-mono">-{formatMoney(netDiscount, profile.currency.symbol)}</span>
+                        <span className="font-mono">-{formatMoney(netDiscount, profile.currency)}</span>
                       </div>
                     )}
                   </div>
@@ -1947,7 +2064,7 @@ export default function InvoiceEditorView({
                   {tax.taxEnabled && tax.taxRate > 0 && (
                     <div className="flex justify-between text-xs text-slate-500 border-t border-slate-50/50 pt-2">
                       <span>{tax.taxName || 'Tax'} (Added {tax.taxRate}%)</span>
-                      <span className="font-mono font-medium">{formatMoney(taxAmount, profile.currency.symbol)}</span>
+                      <span className="font-mono font-medium">{formatMoney(taxAmount, profile.currency)}</span>
                     </div>
                   )}
                 </>
@@ -1958,20 +2075,30 @@ export default function InvoiceEditorView({
             <div className="flex justify-between items-center pt-1 pb-3 border-b border-slate-100">
               <span className="text-sm font-bold text-slate-800">Total Due</span>
               <span className="text-xl font-extrabold text-slate-900 font-mono">
-                {formatMoney(grandTotal, profile.currency.symbol)}
+                {formatMoney(grandTotal, profile.currency)}
               </span>
             </div>
 
             {/* Proceed to Payment Button */}
-            <div className="pt-4">
+            <div className="pt-4 space-y-2">
               <button
                 type="button"
                 onClick={handleProceedToPaymentClick}
-                className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-3 px-4 rounded text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer min-h-[44px]"
+                disabled={isInvoiceEmpty}
+                className={`w-full font-bold py-3 px-4 rounded text-xs transition-all shadow-md flex items-center justify-center gap-2 min-h-[44px] ${
+                  isInvoiceEmpty
+                    ? 'bg-slate-200 text-slate-400 border border-slate-200 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white cursor-pointer'
+                }`}
               >
                 <span>Proceed to Payment</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+              {isInvoiceEmpty && (
+                <p className="text-[11px] text-amber-600 text-center font-bold bg-amber-50 border border-amber-200 rounded-lg p-2 leading-tight">
+                  Add at least one line item first.
+                </p>
+              )}
             </div>
 
             {!draft.customer.name && (
@@ -2135,7 +2262,7 @@ export default function InvoiceEditorView({
                 <div>
                   <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Due Amount</span>
                   <span className="text-lg font-black text-slate-800 font-mono">
-                    {formatMoney(grandTotal, profile.currency.symbol)}
+                    {formatMoney(grandTotal, profile.currency)}
                   </span>
                 </div>
                 <div className="bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1 rounded text-[9px] font-bold uppercase tracking-wider">
@@ -2149,14 +2276,13 @@ export default function InvoiceEditorView({
                   Payment Amount Received ({profile.currency.symbol})
                 </label>
                 <div className="relative">
-                  <input
-                    type="number"
+                  <AmountInput
                     id="modal-partial-amount-input"
-                    step="any"
-                    min="0"
+                    value={parseFloat(tempPartialAmount) || 0}
+                    onChange={(val) => setTempPartialAmount(String(val))}
+                    decimalPlaces={profile.currency.decimalPlaces}
+                    locale={profile.currency.locale}
                     placeholder="0.00"
-                    value={tempPartialAmount}
-                    onChange={(e) => setTempPartialAmount(e.target.value)}
                     className="w-full pr-8 pl-3 py-2.5 border border-slate-300 rounded-lg text-sm font-mono font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     autoFocus
                   />
@@ -2179,7 +2305,7 @@ export default function InvoiceEditorView({
                     {(() => {
                       const amount = parseFloat(tempPartialAmount) || 0;
                       const remaining = Math.max(0, grandTotal - amount);
-                      return formatMoney(remaining, profile.currency.symbol);
+                      return formatMoney(remaining, profile.currency);
                     })()}
                   </span>
                 </div>

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Printer, Download, Eye, AlertCircle, ArrowLeft, CreditCard, ExternalLink, Smartphone, Wallet, Building2, CheckCircle, Check, X, Mail } from 'lucide-react';
+import { Printer, Download, Eye, AlertCircle, ArrowLeft, CreditCard, ExternalLink, Smartphone, Wallet, Building2, CheckCircle, Check, X, Mail, Plus } from 'lucide-react';
 import { InvoiceDraft, BusinessProfile, TaxConfig } from '../types';
 import { formatMoney } from '../constants';
 import { calculateInvoiceTotals, lineTotal } from '../utils/calculations';
@@ -16,9 +16,10 @@ interface InvoicePreviewViewProps {
   profile: BusinessProfile;
   tax: TaxConfig;
   onEdit: () => void;
+  onNewInvoice?: () => void;
 }
 
-export default function InvoicePreviewView({ draft, profile, tax, onEdit }: InvoicePreviewViewProps) {
+export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewInvoice }: InvoicePreviewViewProps) {
   const validItems = draft.items.filter(item => item.description.trim() !== '' || item.unitPrice > 0);
   const grossSubtotal = Math.round((validItems.reduce((sum, i) => sum + lineTotal(i), 0) + Number.EPSILON) * 100) / 100;
 
@@ -26,6 +27,23 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
     calculateInvoiceTotals(draft.items, draft.discountType, draft.discountValue, tax);
 
   const taxRateName = tax.taxName || 'Tax';
+
+  // Helpers for Due Date visibility and Overdue color logic
+  const todayStr = (() => {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  })();
+
+  const remainingDue = Math.max(0, grandTotal - (draft.paidAmount || 0));
+  const shouldShowDueDate = remainingDue > 0 && !!draft.metadata.dueDate;
+  const isOverdue = !!(
+    shouldShowDueDate &&
+    draft.metadata.dueDate &&
+    draft.metadata.dueDate < todayStr
+  );
 
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -47,6 +65,64 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
       useCORS: true,
       logging: false,
       backgroundColor: '#ffffff',
+      onclone: (clonedDoc) => {
+        // Create an offscreen canvas in the cloned document context to resolve OKLCH colors
+        const canvasResolver = clonedDoc.createElement('canvas');
+        canvasResolver.width = 1;
+        canvasResolver.height = 1;
+        const ctxResolver = canvasResolver.getContext('2d');
+
+        const resolveColor = (colorStr: string): string => {
+          if (!colorStr || !colorStr.includes('oklch') || !ctxResolver) return colorStr;
+          try {
+            ctxResolver.fillStyle = colorStr;
+            return ctxResolver.fillStyle;
+          } catch (err) {
+            return colorStr;
+          }
+        };
+
+        const propertiesToConvert = [
+          'color',
+          'backgroundColor',
+          'borderColor',
+          'borderTopColor',
+          'borderBottomColor',
+          'borderLeftColor',
+          'borderRightColor',
+          'fill',
+          'stroke'
+        ];
+
+        const convertElementStyles = (clonedEl: HTMLElement, originalEl: HTMLElement) => {
+          const computed = window.getComputedStyle(originalEl);
+          propertiesToConvert.forEach(prop => {
+            const val = computed[prop as any];
+            if (val && val.includes('oklch')) {
+              const resolved = resolveColor(val);
+              clonedEl.style[prop as any] = resolved;
+            }
+          });
+        };
+
+        // Convert the root element itself
+        const clonedRoot = clonedDoc.getElementById('printable-invoice-canvas');
+        if (clonedRoot && element) {
+          convertElementStyles(clonedRoot as HTMLElement, element);
+          
+          // Convert all descendant elements of the canvas container
+          const clonedElements = clonedRoot.getElementsByTagName('*');
+          const originalElements = element.getElementsByTagName('*');
+
+          for (let i = 0; i < clonedElements.length; i++) {
+            const clonedEl = clonedElements[i] as HTMLElement;
+            const originalEl = originalElements[i] as HTMLElement;
+            if (clonedEl && originalEl) {
+              convertElementStyles(clonedEl, originalEl);
+            }
+          }
+        }
+      }
     });
 
     const imgData = canvas.toDataURL('image/png');
@@ -170,9 +246,9 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
             <tr key={item.id} className={`text-xs text-slate-700 ${alternateRows && idx % 2 === 1 ? 'bg-slate-50/50' : ''}`}>
               <td className="py-2.5 font-normal text-slate-800 pr-3">{item.description}</td>
               <td className="py-2.5 px-3 text-right font-mono">{item.quantity}</td>
-              <td className="py-2.5 px-3 text-right font-mono">{formatMoney(item.unitPrice, profile.currency.symbol)}</td>
+              <td className="py-2.5 px-3 text-right font-mono">{formatMoney(item.unitPrice, profile.currency)}</td>
               <td className="py-2.5 pl-3 text-right font-mono font-bold text-slate-900">
-                {formatMoney(lineTotal(item), profile.currency.symbol)}
+                {formatMoney(lineTotal(item), profile.currency)}
               </td>
             </tr>
           ))
@@ -188,76 +264,110 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
   );
 
   // HELPER component to render invoice totals breakdown
-  const renderTotalsSummary = (isSerif: boolean, doubleBorderTotal: boolean, primaryTextClass: string = 'text-slate-900') => (
-    <div className="space-y-2 text-xs text-slate-600">
-      {/* Gross Subtotal or Net Subtotal depending on tax mode */}
-      <div className="flex justify-between">
-        <span className="text-slate-400 font-semibold">
-          {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 ? 'Subtotal (Gross)' : 'Subtotal'}
-        </span>
-        <span className="font-mono text-slate-900 font-bold">{formatMoney(grossSubtotal, profile.currency.symbol)}</span>
-      </div>
+  const renderTotalsSummary = (isSerif: boolean, doubleBorderTotal: boolean, primaryTextClass: string = 'text-slate-900') => {
+    const paidAmount = draft.paidAmount || 0;
+    const remainingDue = Math.max(0, grandTotal - paidAmount);
 
-      {/* Discount line */}
-      {draft.discountValue > 0 && (
-        <div className="flex justify-between text-red-600 font-bold">
-          <span>
-            Discount {draft.discountType === 'percentage' ? `(${draft.discountValue}%)` : ''}
-          </span>
-          <span className="font-mono">-{formatMoney(netDiscount, profile.currency.symbol)}</span>
-        </div>
-      )}
-
-      {/* Inclusive Net Subtotal section for clarity */}
-      {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 && (
-        <div className="flex justify-between text-[11px] text-slate-400 border-t border-dashed border-slate-100 pt-1">
-          <span>Net Subtotal (Excl. Tax)</span>
-          <span className="font-mono">{formatMoney(netSubtotal, profile.currency.symbol)}</span>
-        </div>
-      )}
-
-      {/* Tax line */}
-      {tax.taxEnabled && tax.taxRate > 0 && (
-        <div className="flex justify-between pb-1">
+    return (
+      <div className="space-y-2 text-xs text-slate-600">
+        {/* Gross Subtotal or Net Subtotal depending on tax mode */}
+        <div className="flex justify-between">
           <span className="text-slate-400 font-semibold">
-            {taxRateName} {tax.taxRate}%
-            <span className="text-[9px] font-normal text-slate-400 lowercase ml-1">
-              ({tax.taxInclusive ? 'included' : 'excluded'})
-            </span>
+            {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 ? 'Subtotal (Gross)' : 'Subtotal'}
           </span>
-          <span className="font-mono text-slate-900 font-bold">{formatMoney(taxAmount, profile.currency.symbol)}</span>
+          <span className="font-mono text-slate-900 font-bold">{formatMoney(grossSubtotal, profile.currency)}</span>
         </div>
-      )}
 
-      {/* Total Due with customizable accent design */}
-      <div className={`border-t border-slate-200 pt-2 flex justify-between items-center ${doubleBorderTotal ? 'border-b-4 border-double border-slate-900 pb-1.5' : ''}`}>
-        <span className={`text-xs font-bold ${isSerif ? 'font-serif' : 'font-sans'} text-slate-800`}>Total Due ({profile.currency.code})</span>
-        <span className={`text-base font-extrabold font-mono ${primaryTextClass}`}>
-          {formatMoney(grandTotal, profile.currency.symbol)}
-        </span>
+        {/* Discount line */}
+        {draft.discountValue > 0 && (
+          <div className="flex justify-between text-red-600 font-bold">
+            <span>
+              Discount {draft.discountType === 'percentage' ? `(${draft.discountValue}%)` : ''}
+            </span>
+            <span className="font-mono">-{formatMoney(netDiscount, profile.currency)}</span>
+          </div>
+        )}
+
+        {/* Inclusive Net Subtotal section for clarity */}
+        {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 && (
+          <div className="flex justify-between text-[11px] text-slate-400 border-t border-dashed border-slate-100 pt-1">
+            <span>Net Subtotal (Excl. Tax)</span>
+            <span className="font-mono">{formatMoney(netSubtotal, profile.currency)}</span>
+          </div>
+        )}
+
+        {/* Tax line */}
+        {tax.taxEnabled && tax.taxRate > 0 && (
+          <div className="flex justify-between pb-1">
+            <span className="text-slate-400 font-semibold">
+              {taxRateName} {tax.taxRate}%
+              <span className="text-[9px] font-normal text-slate-400 lowercase ml-1">
+                ({tax.taxInclusive ? 'included' : 'excluded'})
+              </span>
+            </span>
+            <span className="font-mono text-slate-900 font-bold">{formatMoney(taxAmount, profile.currency)}</span>
+          </div>
+        )}
+
+        {/* Total Due with customizable accent design */}
+        <div className={`border-t border-slate-200 pt-2 flex justify-between items-center ${doubleBorderTotal ? 'border-b-4 border-double border-slate-900 pb-1.5' : ''}`}>
+          <span className={`text-xs font-bold ${isSerif ? 'font-serif' : 'font-sans'} text-slate-800`}>Total Due ({profile.currency.code})</span>
+          <span className={`text-base font-extrabold font-mono ${primaryTextClass}`}>
+            {formatMoney(grandTotal, profile.currency)}
+          </span>
+        </div>
+
+        {/* Calculated Total Paid and Remaining Due */}
+        <div className="border-t border-slate-200/60 pt-2 mt-1 space-y-1.5 text-xs">
+          <div className="flex justify-between">
+            <span className="text-slate-400 font-semibold">Total Paid</span>
+            <span className="font-mono font-bold text-slate-850">{formatMoney(paidAmount, profile.currency)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-400 font-semibold">Remaining Due</span>
+            <span className={`font-mono font-extrabold ${remainingDue > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+              {formatMoney(remainingDue, profile.currency)}
+            </span>
+          </div>
+
+          {/* Repayment Timeframe Details */}
+          {(draft.metadata.paymentTerms || shouldShowDueDate) && (
+            <div className={`text-[10px] text-slate-400 text-right mt-1.5 leading-snug ${isSerif ? 'font-serif' : 'font-sans'} italic`}>
+              {draft.metadata.paymentTerms && (
+                <div>Terms: <span className="font-semibold text-slate-600 not-italic">{draft.metadata.paymentTerms}</span></div>
+              )}
+              {shouldShowDueDate && (
+                <div className="mt-0.5">Due Date: <span className={`font-semibold ${isOverdue ? 'text-red-500 font-bold' : 'text-slate-700'} not-italic font-mono`}>{draft.metadata.dueDate}</span></div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // HELPER component to render payment details/procedures cleanly
   const renderPaymentDetails = (titleColorClass: string = 'text-slate-400', isSerif: boolean = false) => {
-    const methods = profile.paymentMethods || [];
-    const procedure = profile.paymentProcedure;
-    const gateway = profile.paymentGatewayInfo;
-    const mfsProvider = profile.mfsProvider;
-    const mfsAccountNo = profile.mfsAccountNo;
-    const mfsAccountType = profile.mfsAccountType;
-    
-    // Check if any invoice-specific proofs exist
-    const hasMfsProof = !!(draft.mfsTrxId || draft.mfsProvider);
-    const hasBankProof = !!(draft.bankName || draft.bankBranch || draft.bankRoutingNo || draft.bankTransactionId);
+    if (draft.paidAmount <= 0) return null;
 
-    if (methods.length === 0 && !procedure && !gateway && !mfsProvider && !hasMfsProof && !hasBankProof) return null;
+    const pmLower = (draft.paymentMethod || '').toLowerCase();
+    const usedMfs = pmLower.includes('mfs');
+    const usedBank = pmLower.includes('bank');
+
+    const chosenMethods = ['Cash', 'Bank Transfer', 'EFT', 'MFS'].filter(method => {
+      const mLower = method.toLowerCase();
+      return pmLower.includes(mLower);
+    });
+
+    const hasMfsProof = usedMfs && !!(draft.mfsTrxId || draft.mfsProvider);
+    const hasBankProof = usedBank && !!(draft.bankName || draft.bankBranch || draft.bankRoutingNo || draft.bankTransactionId);
+
+    if (chosenMethods.length === 0 && !hasMfsProof && !hasBankProof) return null;
 
     return (
       <div className="space-y-3 mt-4 pt-4 border-t border-slate-100 page-break-inside-avoid" id="preview-payment-details-block">
         <h4 className={`text-[10px] font-bold uppercase tracking-wider ${titleColorClass} ${isSerif ? 'font-serif' : 'font-sans'}`}>
-          Payment Details & Confirmation
+          Payment Record
         </h4>
         <div className="space-y-2.5 text-xs">
           {/* Status Badge inside the Payment Block */}
@@ -271,15 +381,16 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
             ) : (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-250 uppercase tracking-wider font-sans">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                DUE / UNPAID
+                PARTIALLY PAID
               </span>
             )}
           </div>
 
-          {methods.length > 0 && (
+          {/* Chosen/Used Methods */}
+          {chosenMethods.length > 0 && (
             <div className="flex flex-wrap gap-1.5 items-center">
-              <span className="text-slate-500 font-medium mr-1 text-[11px]">Accepted Methods:</span>
-              {methods.map((method) => (
+              <span className="text-slate-500 font-medium mr-1 text-[11px]">Payment Method Used:</span>
+              {chosenMethods.map((method) => (
                 <span 
                   key={method} 
                   className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 uppercase tracking-wider font-mono"
@@ -292,106 +403,61 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
 
           {/* MFS Payment Proof details entered during invoice creation */}
           {hasMfsProof && (
-            <div className="bg-purple-50/70 p-2.5 rounded border border-purple-200 text-purple-950 font-sans text-[11px] text-left flex items-center justify-between gap-2 shadow-2xs animate-fadeIn">
-              <div className="flex items-center gap-1.5">
-                <Smartphone className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                <span>
-                  {draft.mfsProvider ? `${draft.mfsProvider} Payment Proof` : 'MFS Transaction Proof'}:{' '}
-                  {draft.mfsTrxId ? (
-                    <>Trx ID: <strong className="font-mono bg-purple-100 text-purple-900 px-1.5 py-0.5 rounded border border-purple-200 uppercase font-bold text-xs">{draft.mfsTrxId}</strong></>
-                  ) : (
-                    <span className="text-purple-400 italic">No Trx ID entered</span>
-                  )}
-                </span>
+            <div className="border border-slate-200 p-3 rounded text-slate-800 font-sans text-[11px] text-left space-y-1.5 shadow-2xs">
+              <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-[9px] text-slate-500 border-b border-slate-100 pb-1">
+                <Smartphone className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                <span>Mobile Financial Services Proof</span>
               </div>
-              <span className="text-[9px] uppercase tracking-wider font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded font-mono">Confirmed</span>
+              <div className="grid grid-cols-2 gap-2 pt-0.5 text-[11px]">
+                {draft.mfsProvider && (
+                  <div>
+                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide font-sans">Operator</span>
+                    <strong className="text-slate-800 font-bold">{draft.mfsProvider}</strong>
+                  </div>
+                )}
+                {draft.mfsTrxId && (
+                  <div>
+                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide font-sans">Transaction ID</span>
+                    <strong className="text-slate-800 font-mono font-bold uppercase">{draft.mfsTrxId}</strong>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
           {/* Bank Payment Proof details entered during invoice creation */}
           {hasBankProof && (
-            <div className="bg-blue-50/50 p-3 rounded border border-blue-200 text-blue-950 font-sans text-[11px] text-left space-y-1.5 shadow-2xs">
-              <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-[9px] text-blue-700 border-b border-blue-100 pb-1">
-                <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <div className="border border-slate-200 p-3 rounded text-slate-800 font-sans text-[11px] text-left space-y-1.5 shadow-2xs">
+              <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-[9px] text-slate-500 border-b border-slate-100 pb-1">
+                <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 <span>Bank Transfer Confirmation Proof</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-0.5 text-[11px]">
                 {draft.bankName && (
                   <div>
-                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide">Bank Name</span>
+                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide font-sans">Bank Name</span>
                     <strong className="text-slate-800 font-bold">{draft.bankName}</strong>
                   </div>
                 )}
                 {draft.bankBranch && (
                   <div>
-                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide">Branch Name</span>
-                    <strong className="text-slate-800">{draft.bankBranch}</strong>
+                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide font-sans">Branch Name</span>
+                    <strong className="text-slate-800 font-bold">{draft.bankBranch}</strong>
                   </div>
                 )}
                 {draft.bankRoutingNo && (
                   <div>
-                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide">Routing Code</span>
+                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide font-sans">Routing Code</span>
                     <strong className="text-slate-800 font-mono font-bold">{draft.bankRoutingNo}</strong>
                   </div>
                 )}
                 {draft.bankTransactionId && (
                   <div>
-                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide">Tx ID / Receipt No</span>
-                    <strong className="text-slate-800 font-mono font-bold bg-blue-100/60 px-1 py-0.2 rounded border border-blue-200">{draft.bankTransactionId}</strong>
+                    <span className="text-slate-400 block font-semibold text-[9px] uppercase tracking-wide font-sans">Tx ID / Receipt No</span>
+                    <strong className="text-slate-800 font-mono font-bold">{draft.bankTransactionId}</strong>
                   </div>
                 )}
               </div>
-            </div>
-          )}
-
-          {gateway && (
-            <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-200 text-blue-950 font-sans text-[11px] text-left flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
-              <div className="flex items-start gap-2">
-                <CreditCard className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold uppercase tracking-wider text-[9px] text-blue-700 block">Online Payment Gateway Info</span>
-                  <span className="text-slate-700 font-medium break-all">{gateway}</span>
-                </div>
-              </div>
-              {gateway.toLowerCase().startsWith('http') && (
-                <a 
-                  href={gateway} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="no-print inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] px-3 py-1.5 rounded shadow-sm uppercase tracking-wider transition-all shrink-0 cursor-pointer"
-                >
-                  <span>Pay Online</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              )}
-            </div>
-          )}
-
-          {mfsProvider && mfsAccountNo && (
-            <div className="bg-purple-50/50 p-3 rounded-lg border border-purple-200 text-purple-950 font-sans text-[11px] text-left flex items-start gap-2.5 shadow-2xs">
-              <Smartphone className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
-              <div className="space-y-1 w-full">
-                <span className="font-bold uppercase tracking-wider text-[9px] text-purple-700 block">Mobile Financial Service (MFS) Details</span>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-700">
-                  <div>
-                    <span className="text-slate-400 font-medium">Provider:</span> <strong className="text-slate-900 font-semibold">{mfsProvider}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 font-medium">Account No:</span> <strong className="text-slate-900 font-mono font-semibold">{mfsAccountNo}</strong>
-                  </div>
-                  {mfsAccountType && (
-                    <div>
-                      <span className="text-slate-400 font-medium">Type:</span> <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-purple-100 text-purple-800 uppercase tracking-wider font-mono">{mfsAccountType}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {procedure && (
-            <div className="bg-slate-50/50 p-3 rounded border border-slate-150 text-slate-650 whitespace-pre-line leading-relaxed font-sans text-[11px] text-left">
-              {procedure}
             </div>
           )}
         </div>
@@ -402,8 +468,8 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
   return (
     <div className="space-y-6 max-w-4xl mx-auto" id="invoice-preview-view">
       
-      {/* Visual notification toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white border border-slate-200 shadow-sm p-4 rounded gap-4 no-print">
+      {/* Visual notification toolbar - Only Back to Editor button in top right corner */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white border border-slate-200 shadow-sm p-4 rounded gap-4 no-print" id="invoice-preview-top-toolbar">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-slate-50 text-slate-500 rounded">
             <Eye className="w-5 h-5 text-blue-600" />
@@ -421,113 +487,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
             type="button"
             onClick={onEdit}
             id="preview-btn-back-edit"
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer min-h-[36px]"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer min-h-[36px]"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to Editor
           </button>
-
-          <button
-            type="button"
-            onClick={() => setShowPrintPreview(true)}
-            id="preview-btn-print-preview"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[36px]"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            Print Preview (A4)
-          </button>
-
-          <button
-            type="button"
-            onClick={handleSharePDF}
-            disabled={isGeneratingPDF}
-            id="preview-btn-share-pdf"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-400 transition-colors shadow-xs cursor-pointer min-h-[36px]"
-          >
-            {isGeneratingPDF ? (
-              <>
-                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <ExternalLink className="w-3.5 h-3.5" />
-                Share PDF
-              </>
-            )}
-          </button>
-          
-          <button
-            type="button"
-            onClick={handleDownloadPDF}
-            disabled={isGeneratingPDF}
-            id="preview-btn-download-pdf"
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-400 transition-colors shadow-xs cursor-pointer min-h-[36px]"
-          >
-            {isGeneratingPDF ? (
-              <>
-                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Download className="w-3.5 h-3.5" />
-                Download PDF
-              </>
-            )}
-          </button>
         </div>
       </div>
-
-      {/* Paid Invoice Actions Banner */}
-      {draft.status === 'Paid' && (
-        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 no-print animate-fadeIn" id="paid-actions-banner">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-100 text-emerald-800 rounded-full shrink-0">
-              <CheckCircle className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-emerald-950">Payment Received & Confirmed</h4>
-              <p className="text-xs text-emerald-700 mt-0.5">
-                This invoice has been marked as fully <strong className="uppercase font-bold text-emerald-800">Paid</strong>. Proceed to print or send an e-invoice PDF to your customer.
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setShowPrintPreview(true)}
-              id="paid-btn-proceed-print"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[36px]"
-            >
-              <Printer className="w-3.5 h-3.5 text-emerald-400" />
-              Proceed to Print
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSharePDF}
-              disabled={isGeneratingPDF}
-              id="paid-btn-share-pdf"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-400 transition-colors cursor-pointer min-h-[36px]"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Share PDF
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => setShowEmailModal(true)}
-              id="paid-btn-send-email"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors cursor-pointer min-h-[36px]"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              Email Invoice
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Warning if fields are blank */}
       {!draft.customer.name && (
@@ -548,13 +514,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
             <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-6 border-b border-slate-100 pb-6">
               <div className="space-y-3">
                 {profile.logo ? (
-                  <div className="h-14 max-w-[180px] flex items-center">
-                    <img src={profile.logo} alt={profile.companyName} className="max-h-full max-w-full object-contain" referrerPolicy="no-referrer" />
+                  <div className="max-h-[60px] flex items-center">
+                    <img src={profile.logo} alt={profile.companyName} className="max-h-[60px] w-auto object-contain" referrerPolicy="no-referrer" />
                   </div>
                 ) : (
                   <h1 className="text-xl font-bold text-slate-900 tracking-tight">{profile.companyName || 'YOUR BUSINESS'}</h1>
                 )}
-                {profile.companyName && profile.logo && <p className="text-xs font-bold text-slate-850">{profile.companyName}</p>}
+                {profile.companyName && profile.logo && <p className="text-xs font-bold text-black">{profile.companyName}</p>}
               </div>
 
               <div className="text-left md:text-right space-y-1">
@@ -599,10 +565,10 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                   <span className="text-slate-800 font-mono font-bold text-right">{draft.metadata.invoiceNumber}</span>
                   <span className="text-slate-400 font-semibold">Issue Date:</span>
                   <span className="text-slate-800 text-right">{draft.metadata.issueDate}</span>
-                  {draft.metadata.dueDate && (
+                  {shouldShowDueDate && (
                     <>
                       <span className="text-slate-400 font-semibold">Due Date:</span>
-                      <span className="text-red-600 font-semibold text-right">{draft.metadata.dueDate}</span>
+                      <span className={`${isOverdue ? 'text-red-600' : 'text-slate-800'} font-semibold text-right`}>{draft.metadata.dueDate}</span>
                     </>
                   )}
                 </div>
@@ -636,13 +602,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
             <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-6 border-b-2 border-blue-100 pb-6">
               <div className="space-y-3">
                 {profile.logo ? (
-                  <div className="h-14 max-w-[180px] flex items-center">
-                    <img src={profile.logo} alt={profile.companyName} className="max-h-full max-w-full object-contain" referrerPolicy="no-referrer" />
+                  <div className="max-h-[60px] flex items-center">
+                    <img src={profile.logo} alt={profile.companyName} className="max-h-[60px] w-auto object-contain" referrerPolicy="no-referrer" />
                   </div>
                 ) : (
                   <h1 className="text-2xl font-black text-blue-900 tracking-tight">{profile.companyName || 'YOUR BUSINESS'}</h1>
                 )}
-                {profile.companyName && profile.logo && <p className="text-sm font-bold text-blue-900">{profile.companyName}</p>}
+                {profile.companyName && profile.logo && <p className="text-sm font-bold text-black">{profile.companyName}</p>}
               </div>
 
               <div className="text-left md:text-right space-y-1">
@@ -684,10 +650,10 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-left justify-end border-t border-slate-200/60 pt-2 w-full md:w-auto">
                   <span className="text-slate-400 font-medium">Issue Date:</span>
                   <span className="text-slate-800 text-right">{draft.metadata.issueDate}</span>
-                  {draft.metadata.dueDate && (
+                  {shouldShowDueDate && (
                     <>
                       <span className="text-slate-400 font-medium">Due Date:</span>
-                      <span className="text-blue-600 font-bold text-right">{draft.metadata.dueDate}</span>
+                      <span className={`${isOverdue ? 'text-red-600' : 'text-blue-600'} font-bold text-right`}>{draft.metadata.dueDate}</span>
                     </>
                   )}
                 </div>
@@ -774,10 +740,10 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-left justify-end font-sans">
                   <span className="text-slate-400 font-medium">Issue Date:</span>
                   <span className="text-slate-800 text-right">{draft.metadata.issueDate}</span>
-                  {draft.metadata.dueDate && (
+                  {shouldShowDueDate && (
                     <>
                       <span className="text-slate-400 font-medium">Due Date:</span>
-                      <span className="text-slate-950 font-bold text-right">{draft.metadata.dueDate}</span>
+                      <span className={`${isOverdue ? 'text-red-600' : 'text-slate-950'} font-bold text-right`}>{draft.metadata.dueDate}</span>
                     </>
                   )}
                 </div>
@@ -839,10 +805,10 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                 <div className="mt-2 text-[11px] text-slate-500 w-full md:w-auto grid grid-cols-2 gap-x-2 gap-y-0.5">
                   <span>Issue Date:</span>
                   <strong className="text-slate-700 text-right">{draft.metadata.issueDate}</strong>
-                  {draft.metadata.dueDate && (
+                  {shouldShowDueDate && (
                     <>
                       <span>Due Date:</span>
-                      <strong className="text-red-600 text-right">{draft.metadata.dueDate}</strong>
+                      <strong className={`${isOverdue ? 'text-red-600' : 'text-slate-700'} text-right`}>{draft.metadata.dueDate}</strong>
                     </>
                   )}
                 </div>
@@ -911,10 +877,10 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                     <span className="text-[9px] font-black bg-amber-500 text-slate-900 px-2 py-0.5 rounded tracking-wider uppercase font-sans">DUE</span>
                   )}
                 </div>
-                <div className="text-xs font-mono text-slate-350 space-y-0.5 font-mono">
-                  <p>Number: <strong className="text-white">#{draft.metadata.invoiceNumber}</strong></p>
+                <div className="text-xs font-mono text-slate-350 space-y-0.5">
+                  <p>Number: <strong className="text-white font-bold">#{draft.metadata.invoiceNumber}</strong></p>
                   <p>Issued: {draft.metadata.issueDate}</p>
-                  {draft.metadata.dueDate && <p className="text-red-400 font-bold">Due Date: {draft.metadata.dueDate}</p>}
+                  {shouldShowDueDate && <p className={`${isOverdue ? 'text-red-400 font-bold' : 'text-slate-300'}`}>Due Date: {draft.metadata.dueDate}</p>}
                 </div>
               </div>
             </div>
@@ -1046,13 +1012,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                     <div className="flex flex-row justify-between items-start gap-6 border-b border-slate-100 pb-6">
                       <div className="space-y-3">
                         {profile.logo ? (
-                          <div className="h-14 max-w-[180px] flex items-center">
-                            <img src={profile.logo} alt={profile.companyName} className="max-h-full max-w-full object-contain" referrerPolicy="no-referrer" />
+                          <div className="max-h-[60px] flex items-center">
+                            <img src={profile.logo} alt={profile.companyName} className="max-h-[60px] w-auto object-contain" referrerPolicy="no-referrer" />
                           </div>
                         ) : (
                           <h1 className="text-xl font-bold text-slate-900 tracking-tight">{profile.companyName || 'YOUR BUSINESS'}</h1>
                         )}
-                        {profile.companyName && profile.logo && <p className="text-xs font-bold text-slate-850">{profile.companyName}</p>}
+                        {profile.companyName && profile.logo && <p className="text-xs font-bold text-black">{profile.companyName}</p>}
                       </div>
 
                       <div className="text-right space-y-1">
@@ -1092,15 +1058,15 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                             )}
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-left justify-end">
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-left justify-end animate-fadeIn">
                           <span className="text-slate-400 font-semibold">Invoice Number:</span>
                           <span className="text-slate-800 font-mono font-bold text-right">{draft.metadata.invoiceNumber}</span>
                           <span className="text-slate-400 font-semibold">Issue Date:</span>
                           <span className="text-slate-800 text-right">{draft.metadata.issueDate}</span>
-                          {draft.metadata.dueDate && (
+                          {shouldShowDueDate && (
                             <>
                               <span className="text-slate-400 font-semibold">Due Date:</span>
-                              <span className="text-red-600 font-semibold text-right">{draft.metadata.dueDate}</span>
+                              <span className={`${isOverdue ? 'text-red-600' : 'text-slate-800'} font-semibold text-right`}>{draft.metadata.dueDate}</span>
                             </>
                           )}
                         </div>
@@ -1133,13 +1099,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                     <div className="flex flex-row justify-between items-start gap-6 border-b-2 border-blue-100 pb-6">
                       <div className="space-y-3">
                         {profile.logo ? (
-                          <div className="h-14 max-w-[180px] flex items-center">
-                            <img src={profile.logo} alt={profile.companyName} className="max-h-full max-w-full object-contain" referrerPolicy="no-referrer" />
+                          <div className="max-h-[60px] flex items-center">
+                            <img src={profile.logo} alt={profile.companyName} className="max-h-[60px] w-auto object-contain" referrerPolicy="no-referrer" />
                           </div>
                         ) : (
                           <h1 className="text-2xl font-black text-blue-900 tracking-tight">{profile.companyName || 'YOUR BUSINESS'}</h1>
                         )}
-                        {profile.companyName && profile.logo && <p className="text-sm font-bold text-blue-900">{profile.companyName}</p>}
+                        {profile.companyName && profile.logo && <p className="text-sm font-bold text-black">{profile.companyName}</p>}
                       </div>
 
                       <div className="text-right space-y-1">
@@ -1178,13 +1144,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                           </div>
                           <span className="text-[11px] text-blue-600 font-mono font-bold block mt-1">#{draft.metadata.invoiceNumber}</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-left justify-end border-t border-slate-200/60 pt-2 w-full">
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-left justify-end border-t border-slate-200/60 pt-2 w-full max-w-[280px]">
                           <span className="text-slate-400 font-medium">Issue Date:</span>
                           <span className="text-slate-800 text-right">{draft.metadata.issueDate}</span>
-                          {draft.metadata.dueDate && (
+                          {shouldShowDueDate && (
                             <>
                               <span className="text-slate-400 font-medium">Due Date:</span>
-                              <span className="text-blue-600 font-bold text-right">{draft.metadata.dueDate}</span>
+                              <span className={`${isOverdue ? 'text-red-600' : 'text-slate-800'} font-bold text-right`}>{draft.metadata.dueDate}</span>
                             </>
                           )}
                         </div>
@@ -1225,7 +1191,7 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                         ) : (
                           <h1 className="text-3xl font-light tracking-wide text-slate-950 uppercase">{profile.companyName || 'YOUR BUSINESS'}</h1>
                         )}
-                        {profile.companyName && profile.logo && <p className="text-xs font-serif italic text-slate-700">{profile.companyName}</p>}
+                        {profile.companyName && profile.logo && <p className="text-xs font-serif font-bold text-black">{profile.companyName}</p>}
                       </div>
 
                       <div className="text-right space-y-1 font-sans">
@@ -1264,13 +1230,13 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                           </div>
                           <p className="font-sans text-xs font-bold text-slate-500 tracking-wider mt-1.5">No. {draft.metadata.invoiceNumber}</p>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-left justify-end font-sans">
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-left justify-end font-sans max-w-[280px]">
                           <span className="text-slate-400 font-semibold">Issued On:</span>
                           <span className="text-slate-855 text-right font-medium">{draft.metadata.issueDate}</span>
-                          {draft.metadata.dueDate && (
+                          {shouldShowDueDate && (
                             <>
                               <span className="text-slate-400 font-semibold">Due On:</span>
-                              <span className="text-red-700 font-bold text-right">{draft.metadata.dueDate}</span>
+                              <span className={`${isOverdue ? 'text-red-700 font-bold' : 'text-slate-800'} text-right`}>{draft.metadata.dueDate}</span>
                             </>
                           )}
                         </div>
@@ -1379,9 +1345,9 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
                           )}
                         </div>
                         <div className="text-xs font-mono text-slate-350 space-y-0.5">
-                          <p>Number: <strong className="text-white">#{draft.metadata.invoiceNumber}</strong></p>
+                          <p>Number: <strong className="text-white font-bold">#{draft.metadata.invoiceNumber}</strong></p>
                           <p>Issued: {draft.metadata.issueDate}</p>
-                          {draft.metadata.dueDate && <p className="text-red-400 font-bold">Due Date: {draft.metadata.dueDate}</p>}
+                          {shouldShowDueDate && <p className={`${isOverdue ? 'text-red-400 font-bold' : 'text-slate-300'}`}>Due Date: {draft.metadata.dueDate}</p>}
                         </div>
                       </div>
                     </div>
@@ -1439,6 +1405,149 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit }: Invo
           </div>
         </div>
       )}
+
+      {/* Bottom Action Row and Status Banner */}
+      <div className="no-print space-y-4 pt-4" id="preview-bottom-actions">
+        {draft.status === 'Paid' ? (
+          /* Paid invoice status style */
+          <div className="bg-emerald-50 border border-emerald-200 p-5 rounded-xl shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4 animate-fadeIn" id="paid-actions-banner">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-emerald-100 text-emerald-800 rounded-full shrink-0">
+                <CheckCircle className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-emerald-950">Payment Received & Confirmed</h4>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  This invoice has been marked as fully <strong className="uppercase font-bold text-emerald-800">Paid</strong>. Use the controls to print, share, download or start the next invoice.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 flex-wrap">
+              {onNewInvoice && (
+                <button
+                  type="button"
+                  onClick={onNewInvoice}
+                  id="paid-btn-new-invoice"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors cursor-pointer min-h-[38px] shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  Start Next Invoice
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowPrintPreview(true)}
+                id="paid-btn-print-preview"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[38px]"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                Print Preview (A4)
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrint}
+                id="paid-btn-proceed-print"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[38px]"
+              >
+                <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                Proceed to Print
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSharePDF}
+                disabled={isGeneratingPDF}
+                id="paid-btn-share-pdf"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-900 disabled:bg-slate-300 transition-colors cursor-pointer min-h-[38px]"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Share PDF
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadPDF}
+                disabled={isGeneratingPDF}
+                id="paid-btn-download-pdf"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white disabled:bg-slate-300 transition-colors cursor-pointer min-h-[38px]"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download PDF
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* General preview style when draft is unpaid */
+          <div className="bg-slate-50 border border-slate-200 p-5 rounded-xl shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4" id="unpaid-actions-banner">
+            <div>
+              <h4 className="text-sm font-bold text-slate-800">Invoice Draft Options</h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Review this document, then print, share, download or start your next empty invoice.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {onNewInvoice && (
+                <button
+                  type="button"
+                  onClick={onNewInvoice}
+                  id="unpaid-btn-new-invoice"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors cursor-pointer min-h-[38px] shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  Start Next Invoice
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowPrintPreview(true)}
+                id="unpaid-btn-print-preview"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[38px]"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                Print Preview (A4)
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrint}
+                id="unpaid-btn-proceed-print"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[38px]"
+              >
+                <Printer className="w-3.5 h-3.5 text-blue-400" />
+                Proceed to Print
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSharePDF}
+                disabled={isGeneratingPDF}
+                id="unpaid-btn-share-pdf"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-900 disabled:bg-slate-300 transition-colors cursor-pointer min-h-[38px]"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Share PDF
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadPDF}
+                disabled={isGeneratingPDF}
+                id="unpaid-btn-download-pdf"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-800 disabled:bg-slate-300 transition-colors cursor-pointer min-h-[38px]"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download PDF
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ==================== E-INVOICE EMAIL MODAL ==================== */}
       {showEmailModal && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn" id="email-invoice-modal-backdrop">

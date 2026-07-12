@@ -85,21 +85,18 @@ src/
 
 Second app from AIL Apps, after [Shohoj Hishab](https://github.com/ailinkon/shohojhishab-app) (live on Google Play).
 
-## License
-
-
-
-
 ## Sample
-<img width="464" height="445" alt="Screenshot 2026-07-12 034706" src="https://github.com/user-attachments/assets/873da421-0657-44c7-a6b0-be6f4b196455" />
 
-<img width="417" height="372" alt="Screenshot 2026-07-12 034511" src="https://github.com/user-attachments/assets/c70ad6ef-f69b-4cf0-ae52-dd60a6e61790" />
+<img width="464" height="445" alt="FastInvo editor" src="https://github.com/user-attachments/assets/873da421-0657-44c7-a6b0-be6f4b196455" />
 
-<img width="467" height="327" alt="Screenshot 2026-07-12 034532" src="https://github.com/user-attachments/assets/daf1b519-9a22-4adb-a82a-c59142d013cb" />
+<img width="417" height="372" alt="Record payment" src="https://github.com/user-attachments/assets/c70ad6ef-f69b-4cf0-ae52-dd60a6e61790" />
 
-<img width="275" height="413" alt="Screenshot 2026-07-12 034627" src="https://github.com/user-attachments/assets/81d3a94b-5067-44e0-a67c-392bac0f8585" />
+<img width="467" height="327" alt="Payment options" src="https://github.com/user-attachments/assets/daf1b519-9a22-4adb-a82a-c59142d013cb" />
 
-<img width="418" height="301" alt="Screenshot 2026-07-12 034646" src="https://github.com/user-attachments/assets/239edd83-68e3-4b0f-b3c9-0b0aef4dc44a" />
+<img width="275" height="413" alt="Split payment" src="https://github.com/user-attachments/assets/81d3a94b-5067-44e0-a67c-392bac0f8585" />
 
+<img width="418" height="301" alt="Invoice preview" src="https://github.com/user-attachments/assets/239edd83-68e3-4b0f-b3c9-0b0aef4dc44a" />
+
+## License
 
 All rights reserved. This code is public for portfolio and transparency purposes; please don't redistribute or republish it as your own product.

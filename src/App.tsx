@@ -10,7 +10,9 @@ import {
   Eye, 
   Settings as SettingsIcon, 
   Sparkles,
-  Receipt
+  Receipt,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { BusinessProfile, TaxConfig, InvoiceDraft, Client } from './types';
 import { 
@@ -25,6 +27,29 @@ import InvoicePreviewView from './components/InvoicePreviewView';
 export default function App() {
   // 1. Tab State Management
   const [activeTab, setActiveTab] = useState<'editor' | 'preview' | 'settings'>('editor');
+
+  // Theme State Management (Loads from localStorage or defaults)
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    const saved = localStorage.getItem('fastinvo_theme');
+    if (saved) {
+      return saved === 'dark';
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('fastinvo_theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('fastinvo_theme', 'light');
+    }
+  }, [isDark]);
+
+  const toggleTheme = () => {
+    setIsDark(prev => !prev);
+  };
 
   // 2. Profile State Management (Loads from localStorage or defaults)
   const [profile, setProfile] = useState<BusinessProfile>(() => {
@@ -156,8 +181,8 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (activeTab !== 'editor') return;
 
-      const isZ = e.key.toLowerCase() === 'z';
-      const isY = e.key.toLowerCase() === 'y';
+      const isZ = e.key?.toLowerCase() === 'z';
+      const isY = e.key?.toLowerCase() === 'y';
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       const isShift = e.shiftKey;
 
@@ -290,14 +315,29 @@ export default function App() {
               </nav>
             </div>
 
-            {/* Visual indicators for High Density layout state */}
-            <div className="hidden md:flex items-center gap-3 text-xs text-slate-400 font-medium">
-              <span className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-                Local Autosave
-              </span>
-              <span className="text-slate-300">|</span>
-              <span>Currency: {profile.currency.code} ({profile.currency.symbol})</span>
+            {/* Theme Toggle & Indicators */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                id="theme-toggle-btn"
+                className="p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center border border-slate-150 dark:border-slate-800"
+                title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              >
+                {isDark ? (
+                  <Sun className="w-4 h-4 text-amber-500 animate-fadeIn" />
+                ) : (
+                  <Moon className="w-4 h-4 text-slate-700 animate-fadeIn" />
+                )}
+              </button>
+
+              <div className="hidden md:flex items-center gap-3 text-xs text-slate-400 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                  Local Autosave
+                </span>
+                <span className="text-slate-300">|</span>
+                <span>Currency: {profile.currency.code} ({profile.currency.symbol})</span>
+              </div>
             </div>
 
           </div>
@@ -339,6 +379,7 @@ export default function App() {
                 profile={profile}
                 tax={tax}
                 onEdit={() => setActiveTab('editor')}
+                onNewInvoice={handleNewInvoice}
               />
             )}
 
@@ -348,6 +389,8 @@ export default function App() {
                 setProfile={setProfile}
                 tax={tax}
                 setTax={setTax}
+                isDark={isDark}
+                onToggleTheme={toggleTheme}
               />
             )}
           </motion.div>

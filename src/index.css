@@ -1,8 +1,112 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Custom dark mode overrides */
+.dark body {
+  background-color: #030712 !important; /* slate-950 */
+  color: #f9fafb !important; /* slate-50 */
+}
+
+.dark #app-chrome-header,
+.dark header {
+  background-color: #0f172a !important; /* slate-900 */
+  border-color: #1e293b !important; /* slate-800 */
+}
+
+.dark footer {
+  background-color: #0f172a !important;
+  border-color: #1e293b !important;
+  color: #94a3b8 !important;
+}
+
+/* Class-based overrides for container elements and sections */
+.dark .bg-white:not(#printable-invoice-canvas):not(#printable-invoice-canvas *) {
+  background-color: #0f172a !important; /* slate-900 */
+}
+
+.dark .bg-slate-50:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .bg-slate-50\/50:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .bg-slate-100:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .bg-slate-100\/50:not(#printable-invoice-canvas):not(#printable-invoice-canvas *) {
+  background-color: #1e293b !important; /* slate-800 */
+}
+
+.dark .bg-[#f9fafb] {
+  background-color: #030712 !important; /* slate-950 */
+}
+
+/* Border color overrides */
+.dark .border-slate-100:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .border-slate-200:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .border-slate-250:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .border-slate-300:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .border-gray-200\/60 {
+  border-color: #334155 !important; /* slate-700 */
+}
+
+/* Input backgrounds and focus states */
+.dark input:not(#printable-invoice-canvas *),
+.dark select:not(#printable-invoice-canvas *),
+.dark textarea:not(#printable-invoice-canvas *) {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #f8fafc !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748b !important;
+}
+
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  background-color: #0f172a !important;
+  border-color: #3b82f6 !important;
+}
+
+/* Hover background overrides */
+.dark .hover\:bg-slate-50:not(#printable-invoice-canvas):not(#printable-invoice-canvas *):hover,
+.dark .hover\:bg-slate-100:not(#printable-invoice-canvas):not(#printable-invoice-canvas *):hover {
+  background-color: #1e293b !important;
+}
+
+/* Text color overrides */
+.dark .text-slate-900:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-slate-800:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-slate-850:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-slate-700:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-gray-900:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-gray-800:not(#printable-invoice-canvas):not(#printable-invoice-canvas *) {
+  color: #f1f5f9 !important; /* slate-100 */
+}
+
+.dark .text-slate-600:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-slate-500:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-gray-600:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-gray-500:not(#printable-invoice-canvas):not(#printable-invoice-canvas *) {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+.dark .text-slate-400:not(#printable-invoice-canvas):not(#printable-invoice-canvas *),
+.dark .text-gray-400:not(#printable-invoice-canvas):not(#printable-invoice-canvas *) {
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Modal backgrounds */
+.dark .fixed.inset-0.bg-slate-950\/60 {
+  background-color: rgba(3, 7, 18, 0.8) !important;
+}
+
+/* Interactive tables and hover states */
+.dark tr:not(#printable-invoice-canvas *):hover {
+  background-color: rgba(30, 41, 59, 0.4) !important;
 }
 
 /* Scrollbar styling */
