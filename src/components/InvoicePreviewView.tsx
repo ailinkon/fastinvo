@@ -267,15 +267,18 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
   const renderTotalsSummary = (isSerif: boolean, doubleBorderTotal: boolean, primaryTextClass: string = 'text-slate-900') => {
     const paidAmount = draft.paidAmount || 0;
     const remainingDue = Math.max(0, grandTotal - paidAmount);
+    const isInclusive = tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0;
 
     return (
       <div className="space-y-2 text-xs text-slate-600">
-        {/* Gross Subtotal or Net Subtotal depending on tax mode */}
+        {/* Subtotal (Excl. Tax) for inclusive or regular Subtotal for exclusive */}
         <div className="flex justify-between">
           <span className="text-slate-400 font-semibold">
-            {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 ? 'Subtotal (Gross)' : 'Subtotal'}
+            {isInclusive ? 'Subtotal (Excl. Tax)' : 'Subtotal'}
           </span>
-          <span className="font-mono text-slate-900 font-bold">{formatMoney(grossSubtotal, profile.currency)}</span>
+          <span className="font-mono text-slate-900 font-bold">
+            {formatMoney(isInclusive ? netSubtotal : grossSubtotal, profile.currency)}
+          </span>
         </div>
 
         {/* Discount line */}
@@ -285,14 +288,6 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
               Discount {draft.discountType === 'percentage' ? `(${draft.discountValue}%)` : ''}
             </span>
             <span className="font-mono">-{formatMoney(netDiscount, profile.currency)}</span>
-          </div>
-        )}
-
-        {/* Inclusive Net Subtotal section for clarity */}
-        {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 && (
-          <div className="flex justify-between text-[11px] text-slate-400 border-t border-dashed border-slate-100 pt-1">
-            <span>Net Subtotal (Excl. Tax)</span>
-            <span className="font-mono">{formatMoney(netSubtotal, profile.currency)}</span>
           </div>
         )}
 

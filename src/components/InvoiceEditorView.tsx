@@ -1954,10 +1954,10 @@ export default function InvoiceEditorView({
             <div className="space-y-3 pb-4 border-b border-slate-100">
               {tax.taxEnabled && tax.taxInclusive && tax.taxRate > 0 ? (
                 <>
-                  {/* Gross Subtotal */}
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>Subtotal (Gross)</span>
-                    <span className="font-mono font-medium">{formatMoney(grossSubtotal, profile.currency)}</span>
+                  {/* Subtotal (Excl. Tax) */}
+                  <div className="flex justify-between text-xs text-slate-500 font-medium">
+                    <span>Subtotal (Excl. Tax)</span>
+                    <span className="font-mono">{formatMoney(netSubtotal, profile.currency)}</span>
                   </div>
 
                   {/* Discount input section */}
@@ -1994,20 +1994,14 @@ export default function InvoiceEditorView({
 
                     {draft.discountValue > 0 && (
                       <div className="flex justify-between text-xs text-red-600 font-semibold">
-                        <span>Discount Applied (Gross)</span>
+                        <span>Discount Applied</span>
                         <span className="font-mono">-{formatMoney(netDiscount, profile.currency)}</span>
                       </div>
                     )}
                   </div>
 
-                  {/* Net Subtotal */}
-                  <div className="flex justify-between text-xs text-slate-500 border-t border-slate-50/50 pt-2 font-medium">
-                    <span>Net Subtotal (Excl. Tax)</span>
-                    <span className="font-mono">{formatMoney(netSubtotal, profile.currency)}</span>
-                  </div>
-
                   {/* Extracted Tax */}
-                  <div className="flex justify-between text-xs text-slate-500">
+                  <div className="flex justify-between text-xs text-slate-500 border-t border-slate-50/50 pt-2">
                     <span>{tax.taxName || 'Tax'} ({tax.taxRate}% Included)</span>
                     <span className="font-mono font-medium">{formatMoney(taxAmount, profile.currency)}</span>
                   </div>
