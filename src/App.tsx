@@ -345,30 +345,30 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f9fafb] dark:bg-slate-950 flex flex-col font-sans text-slate-900 dark:text-slate-100 transition-colors duration-150">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-clip bg-[#f9fafb] dark:bg-slate-950 flex flex-col font-sans text-slate-900 dark:text-slate-100 transition-colors duration-150">
       
       {/* Sleek App Navigation Header (Omitted on print) */}
-      <header className="no-print bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm" id="app-chrome-header">
+      <header className="no-print bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm w-full max-w-full min-w-0" id="app-chrome-header">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between h-16 gap-2">
             
             {/* Minimal logo / understated wordmark */}
-            <div className="flex items-center gap-12">
-              <div className="flex items-center gap-2">
-                <div className="p-1 bg-slate-900 dark:bg-slate-800 text-white rounded flex items-center justify-center">
+            <div className="flex items-center gap-2 sm:gap-6 md:gap-12 min-w-0 overflow-hidden">
+              <div className="flex items-center gap-1.5 shrink-0">
+                <div className="p-1 bg-slate-900 dark:bg-slate-800 text-white rounded flex items-center justify-center shrink-0">
                   <Receipt className="w-4 h-4" />
                 </div>
-                <span className="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight font-sans">
+                <span className="text-sm sm:text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight font-sans shrink-0">
                   FastInvo
                 </span>
               </div>
 
               {/* View Switcher / Tab Bar */}
-              <nav className="flex space-x-1" id="app-view-tabs" aria-label="Tabs">
+              <nav className="flex space-x-1 overflow-x-auto scrollbar-none min-w-0 py-1" id="app-view-tabs" aria-label="Tabs">
                 <button
                   onClick={() => handleTabChange('editor')}
                   id="tab-btn-editor"
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
+                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
                     activeTab === 'editor'
                       ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
                       : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
@@ -381,7 +381,7 @@ export default function App() {
                  <button
                   onClick={() => handleTabChange('preview')}
                   id="tab-btn-preview"
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
+                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
                     activeTab === 'preview'
                       ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
                       : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
@@ -394,7 +394,7 @@ export default function App() {
                 <button
                   onClick={() => handleTabChange('history')}
                   id="tab-btn-history"
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
+                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
                     activeTab === 'history'
                       ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
                       : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
@@ -407,7 +407,7 @@ export default function App() {
                 <button
                   onClick={() => handleTabChange('settings')}
                   id="tab-btn-settings"
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
+                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
                     activeTab === 'settings'
                       ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
                       : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
@@ -420,11 +420,11 @@ export default function App() {
             </div>
 
             {/* Theme Toggle & Indicators */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
               <button
                 onClick={toggleTheme}
                 id="theme-toggle-btn"
-                className="p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center border border-slate-150 dark:border-slate-800"
+                className="p-1.5 sm:p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[34px] min-w-[34px] flex items-center justify-center border border-slate-150 dark:border-slate-800"
                 title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
               >
                 {isDark ? (
@@ -449,7 +449,7 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8" id="app-main-content">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-full min-w-0" id="app-main-content">
         <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={activeTab}
@@ -459,7 +459,7 @@ export default function App() {
             animate="center"
             exit="exit"
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="w-full h-full"
+            className="w-full h-full max-w-full min-w-0"
           >
             {activeTab === 'editor' && (
               <InvoiceEditorView
@@ -513,7 +513,7 @@ export default function App() {
       </main>
 
       {/* Subtle Footer (Omitted on print) */}
-      <footer className="no-print bg-white dark:bg-slate-900 border-t border-gray-200/60 dark:border-slate-800 py-5 text-center text-xs text-gray-400 dark:text-slate-500" id="app-footer">
+      <footer className="no-print bg-white dark:bg-slate-900 border-t border-gray-200/60 dark:border-slate-800 py-5 text-center text-xs text-gray-400 dark:text-slate-500 w-full max-w-full min-w-0" id="app-footer">
         <div className="max-w-7xl mx-auto px-4">
           <p>© {new Date().getFullYear()} FastInvo. Fast, private, and offline-first invoice builder.</p>
         </div>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Printer, Download, Eye, AlertCircle, ArrowLeft, CreditCard, ExternalLink, Smartphone, Wallet, Building2, CheckCircle, Check, X, Mail, Plus } from 'lucide-react';
 import { InvoiceDraft, BusinessProfile, TaxConfig } from '../types';
 import { formatMoney } from '../constants';
@@ -49,6 +49,35 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
   );
 
   const [showPrintPreview, setShowPrintPreview] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState<number>(0);
+
+  useEffect(() => {
+    if (!showPrintPreview || !containerRef.current) return;
+    
+    const handleResize = () => {
+      if (containerRef.current) {
+        const style = window.getComputedStyle(containerRef.current);
+        const paddingLeft = parseFloat(style.paddingLeft || '0');
+        const paddingRight = parseFloat(style.paddingRight || '0');
+        const rectWidth = containerRef.current.getBoundingClientRect().width;
+        // fallback to clientWidth if rectWidth is 0
+        const elWidth = rectWidth > 0 ? rectWidth : containerRef.current.clientWidth;
+        const width = elWidth - paddingLeft - paddingRight;
+        setContainerWidth(width > 0 ? width : 0);
+      }
+    };
+
+    handleResize();
+
+    const observer = new ResizeObserver(handleResize);
+    observer.observe(containerRef.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [showPrintPreview]);
+
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailAddress, setEmailAddress] = useState(draft.customer.email || '');
@@ -191,7 +220,7 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
         err.message.toLowerCase().includes('abort')
       );
       if (!isCancellation) {
-        setPdfError('Could not export PDF');
+        setPdfError(`Could not export PDF: ${String((err as any)?.message ?? err)}`);
       }
     } finally {
       setIsGeneratingPDF(false);
@@ -237,7 +266,7 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
         err.message.toLowerCase().includes('abort')
       );
       if (!isCancellation) {
-        setPdfError('Could not export PDF');
+        setPdfError(`Could not export PDF: ${String((err as any)?.message ?? err)}`);
       }
     } finally {
       setIsGeneratingPDF(false);
@@ -1031,16 +1060,37 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
 
           {/* Simulated A4 Container scroll area */}
           <div className="flex-1 w-full flex justify-center items-start overflow-auto p-4 max-w-5xl mx-auto">
-            <div className="bg-slate-900/30 p-2 sm:p-6 md:p-8 rounded-2xl border border-slate-800/40 w-full flex justify-center shadow-inner overflow-x-auto">
-              <div 
-                className="bg-white text-slate-800 shadow-2xl border border-slate-300 relative rounded-sm font-sans shrink-0 overflow-hidden"
-                style={{
-                  width: '210mm',
-                  minHeight: '297mm',
-                  padding: '12mm 15mm'
-                }}
-              >
-                {/* Inner replica of active template */}
+            {(() => {
+              const A4_WIDTH_PX = 794;
+              const A4_HEIGHT_PX = 1123;
+              const effectiveWidth = containerWidth > 0 ? containerWidth : A4_WIDTH_PX;
+              const scale = effectiveWidth < A4_WIDTH_PX ? (effectiveWidth / A4_WIDTH_PX) : 1;
+              return (
+                <div 
+                  ref={containerRef}
+                  className="bg-slate-900/30 p-2 sm:p-6 md:p-8 rounded-2xl border border-slate-800/40 w-full flex justify-center shadow-inner overflow-hidden"
+                >
+                  <div 
+                    className="relative overflow-hidden shrink-0 flex justify-start items-start"
+                    style={{
+                      width: `${A4_WIDTH_PX * scale}px`,
+                      height: `${A4_HEIGHT_PX * scale}px`,
+                    }}
+                  >
+                    <div 
+                      className="bg-white text-slate-800 shadow-2xl border border-slate-300 relative rounded-sm font-sans shrink-0 overflow-hidden"
+                      style={{
+                        width: `${A4_WIDTH_PX}px`,
+                        minHeight: `${A4_HEIGHT_PX}px`,
+                        padding: '12mm 15mm',
+                        transform: `scale(${scale})`,
+                        transformOrigin: 'top left',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                      }}
+                    >
+                      {/* Inner replica of active template */}
                 {selectedTemplate === 'minimalist' && (
                   <div className="space-y-8 animate-fadeIn">
                     <div className="flex flex-row justify-between items-start gap-6 border-b border-slate-100 pb-6">
@@ -1434,8 +1484,11 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
                   </div>
                 )}
 
-              </div>
-            </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

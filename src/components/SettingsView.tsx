@@ -383,7 +383,7 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave,
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:col-span-2">
                 <div className="space-y-1">
                   <label htmlFor="tax-reg-label-input" className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Reg. Type Label</label>
                   <input
@@ -434,7 +434,7 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave,
               </div>
 
               {isCustomCurrency && (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <label htmlFor="custom-code-input" className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Currency Code</label>
                     <input
@@ -545,7 +545,7 @@ export default function SettingsView({ profile, setProfile, tax, setTax, onSave,
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:col-span-2">
                 <div className="space-y-1">
                   <label htmlFor="invoice-prefix-input" className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Invoice Prefix</label>
                   <input
