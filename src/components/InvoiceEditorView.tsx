@@ -24,8 +24,10 @@ import {
 import { InvoiceDraft, LineItem, BusinessProfile, TaxConfig, DiscountType, Client } from '../types';
 import { formatMoney, getTodayDateString, DEFAULT_INVOICE_DRAFT } from '../constants';
 import { calculateInvoiceTotals, lineTotal } from '../utils/calculations';
+import { normalizeNumericInput, parseNumericInput } from '../utils/normalizeNumericInput';
 import { Undo2, Redo2, BookOpen, UserPlus, Save, Check, X, Edit, Trash, Search, Building2, CheckCircle, HelpCircle, Sparkles } from 'lucide-react';
 import { BANGLADESHI_BANKS, generateMockRoutingNumber } from '../utils/bankData';
+import PhoneInputWithCountry from './PhoneInputWithCountry';
 
 const MFS_OPTIONS = ['Bkash', 'Celsin', 'Nagad', 'Rocket', 'Upay', 'M-Cash'];
 
@@ -77,7 +79,8 @@ function AmountInput({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawStr = e.target.value;
-    const digits = rawStr.replace(/\D/g, '');
+    const normalized = normalizeNumericInput(rawStr);
+    const digits = normalized.replace(/\D/g, '');
     
     if (digits === '') {
       onChange(0);
@@ -375,8 +378,8 @@ export default function InvoiceEditorView({
   };
 
   const handleConfirmPartialAmount = () => {
-    const parsed = parseFloat(tempPartialAmount);
-    if (isNaN(parsed) || parsed < 0) return;
+    const parsed = parseNumericInput(tempPartialAmount);
+    if (parsed < 0) return;
 
     setDraft(prev => {
       const isPaid = parsed >= grandTotal;
@@ -394,7 +397,7 @@ export default function InvoiceEditorView({
     const entries = Object.keys(splitAmounts)
       .map(method => {
         const val = splitAmounts[method];
-        const amt = parseFloat(val) || 0;
+        const amt = parseNumericInput(val);
         return { method, amt };
       })
       .filter(e => e.amt > 0);
@@ -568,8 +571,7 @@ export default function InvoiceEditorView({
     // Type validation for inputs
     let typedValue = value;
     if (field === 'quantity') {
-      typedValue = parseFloat(value);
-      if (isNaN(typedValue)) typedValue = 0;
+      typedValue = parseNumericInput(value);
       if (typedValue < 0) {
         setErrors(prev => ({ ...prev, [`qty-${index}`]: "Must be positive" }));
         typedValue = 0;
@@ -581,8 +583,7 @@ export default function InvoiceEditorView({
         });
       }
     } else if (field === 'unitPrice') {
-      typedValue = parseFloat(value);
-      if (isNaN(typedValue)) typedValue = 0;
+      typedValue = parseNumericInput(value);
       if (typedValue < 0) {
         setErrors(prev => ({ ...prev, [`price-${index}`]: "Must be positive" }));
         typedValue = 0;
@@ -841,10 +842,10 @@ export default function InvoiceEditorView({
               {/* Dynamic calculated Sum Total Received */}
               {(() => {
                 const totalSplitReceived = (
-                  (parseFloat(splitAmounts['Cash']) || 0) +
-                  (parseFloat(splitAmounts['Bank Transfer']) || 0) +
-                  (parseFloat(splitAmounts['EFT']) || 0) +
-                  (parseFloat(splitAmounts['MFS']) || 0)
+                  (parseNumericInput(splitAmounts['Cash']) || 0) +
+                  (parseNumericInput(splitAmounts['Bank Transfer']) || 0) +
+                  (parseNumericInput(splitAmounts['EFT']) || 0) +
+                  (parseNumericInput(splitAmounts['MFS']) || 0)
                 );
                 return (
                   <div className="bg-blue-50/45 border border-blue-150 rounded-xl p-4 flex justify-between items-center shadow-2xs">
@@ -880,7 +881,7 @@ export default function InvoiceEditorView({
                     // Calculate remaining amount dynamically to provide as a single-click prefill helper
                     const currentOtherTotal = Object.keys(splitAmounts)
                       .filter(k => k !== opt.id)
-                      .reduce((sum, k) => sum + (parseFloat(splitAmounts[k]) || 0), 0);
+                      .reduce((sum, k) => sum + (parseNumericInput(splitAmounts[k]) || 0), 0);
                     const remainingForThis = Math.max(0, grandTotal - currentOtherTotal);
 
                     return (
@@ -936,7 +937,7 @@ export default function InvoiceEditorView({
                         {/* Relative Input field with currency symbol */}
                         <div className="relative">
                           <AmountInput
-                            value={parseFloat(val) || 0}
+                            value={parseNumericInput(val)}
                             onChange={(newValue) => {
                               setSplitAmounts(prev => ({
                                 ...prev,
@@ -989,10 +990,10 @@ export default function InvoiceEditorView({
               {/* Live Calculator breakdown */}
               {(() => {
                 const totalSplitReceived = (
-                  (parseFloat(splitAmounts['Cash']) || 0) +
-                  (parseFloat(splitAmounts['Bank Transfer']) || 0) +
-                  (parseFloat(splitAmounts['EFT']) || 0) +
-                  (parseFloat(splitAmounts['MFS']) || 0)
+                  (parseNumericInput(splitAmounts['Cash']) || 0) +
+                  (parseNumericInput(splitAmounts['Bank Transfer']) || 0) +
+                  (parseNumericInput(splitAmounts['EFT']) || 0) +
+                  (parseNumericInput(splitAmounts['MFS']) || 0)
                 );
                 return (
                   <div className="bg-white rounded-xl p-4 border border-slate-150 space-y-2 text-xs text-slate-600">
@@ -1124,7 +1125,7 @@ export default function InvoiceEditorView({
                 <div className="relative">
                   <AmountInput
                     id="checkout-amount-received"
-                    value={parseFloat(tempPartialAmount) || 0}
+                    value={parseNumericInput(tempPartialAmount)}
                     onChange={(val) => setTempPartialAmount(String(val))}
                     decimalPlaces={profile.currency.decimalPlaces}
                     locale={profile.currency.locale}
@@ -1143,12 +1144,12 @@ export default function InvoiceEditorView({
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-slate-500">Amount Received</span>
                   <span className="font-mono font-bold text-slate-800">
-                    {formatMoney(parseFloat(tempPartialAmount) || 0, profile.currency)}
+                    {formatMoney(parseNumericInput(tempPartialAmount), profile.currency)}
                   </span>
                 </div>
                 
                 {(() => {
-                  const val = parseFloat(tempPartialAmount) || 0;
+                  const val = parseNumericInput(tempPartialAmount);
                   if (val >= grandTotal) {
                     return (
                       <div className="flex justify-between items-center text-emerald-700 font-semibold border-t border-slate-100 pt-2">
@@ -1174,7 +1175,7 @@ export default function InvoiceEditorView({
                 <div className="flex justify-between items-center border-t border-slate-100 pt-2.5">
                   <span className="font-semibold text-slate-500 font-sans">Payment Status</span>
                   {(() => {
-                    const val = parseFloat(tempPartialAmount) || 0;
+                    const val = parseNumericInput(tempPartialAmount);
                     if (val >= grandTotal) {
                       return (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase tracking-wider font-sans">
@@ -1210,9 +1211,9 @@ export default function InvoiceEditorView({
                 <button
                   type="button"
                   onClick={handleConfirmPartialAmount}
-                  disabled={!tempPartialAmount || parseFloat(tempPartialAmount) < 0}
+                  disabled={!tempPartialAmount || parseNumericInput(tempPartialAmount) < 0}
                   className={`flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all shadow-sm cursor-pointer text-center active:scale-95 ${
-                    (!tempPartialAmount || parseFloat(tempPartialAmount) < 0) ? 'opacity-50 cursor-not-allowed' : ''
+                    (!tempPartialAmount || parseNumericInput(tempPartialAmount) < 0) ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 >
                   Confirm & Next
@@ -1327,23 +1328,23 @@ export default function InvoiceEditorView({
     <div className="space-y-5" id="invoice-editor-view">
       
       {/* Top action toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-slate-800 pb-4 gap-4">
         <div>
-          <h2 className="text-lg font-bold tracking-tight text-slate-800">Invoice Editor</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Build your draft. Everything is autosaved locally.</p>
+          <h2 className="text-lg font-bold tracking-tight text-slate-800 dark:text-slate-100">Invoice Editor</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Build your draft. Everything is autosaved locally.</p>
         </div>
         
         <div className="flex items-center gap-2 action-buttons">
           {/* Undo / Redo Buttons */}
-          <div className="flex items-center border border-slate-200 rounded bg-white overflow-hidden shadow-xs">
+          <div className="flex items-center border border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
             <button
               type="button"
               onClick={onUndo}
               disabled={!canUndo}
-              className={`p-2.5 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center border-r border-slate-1.50 ${
+              className={`p-2.5 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center border-r border-slate-300 dark:border-slate-500 ${
                 canUndo 
-                  ? 'text-slate-600 hover:bg-slate-50 active:bg-slate-100 cursor-pointer' 
-                  : 'text-slate-300 cursor-not-allowed opacity-50'
+                  ? 'text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 active:bg-slate-100 dark:active:bg-slate-700 cursor-pointer' 
+                  : 'text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-50'
               }`}
               title="Undo change (Ctrl+Z)"
             >
@@ -1355,8 +1356,8 @@ export default function InvoiceEditorView({
               disabled={!canRedo}
               className={`p-2.5 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center ${
                 canRedo 
-                  ? 'text-slate-600 hover:bg-slate-50 active:bg-slate-100 cursor-pointer' 
-                  : 'text-slate-300 cursor-not-allowed opacity-50'
+                  ? 'text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 active:bg-slate-100 dark:active:bg-slate-700 cursor-pointer' 
+                  : 'text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-50'
               }`}
               title="Redo change (Ctrl+Y)"
             >
@@ -1371,7 +1372,7 @@ export default function InvoiceEditorView({
             id="editor-btn-preview"
             className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-all shadow-sm min-h-[44px] ${
               isInvoiceEmpty
-                ? 'bg-slate-250 text-slate-400 border border-slate-200 cursor-not-allowed'
+                ? 'bg-slate-250 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border border-slate-200 dark:border-slate-700 cursor-not-allowed'
                 : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 cursor-pointer'
             }`}
           >
@@ -1383,10 +1384,10 @@ export default function InvoiceEditorView({
             type="button"
             onClick={onNewInvoice}
             id="editor-btn-new"
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100 transition-all cursor-pointer min-h-[44px]"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 active:bg-slate-100 dark:active:bg-slate-700 transition-all cursor-pointer min-h-[44px]"
             title="Increment counter and start a fresh invoice draft"
           >
-            <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+            <RefreshCw className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
             New Invoice
           </button>
 
@@ -1394,10 +1395,10 @@ export default function InvoiceEditorView({
             type="button"
             onClick={clearInvoice}
             id="editor-btn-clear"
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded bg-white border border-slate-200 text-red-600 hover:bg-red-50 hover:border-red-100 hover:text-red-700 active:bg-red-100 transition-all cursor-pointer min-h-[44px]"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-100 dark:hover:border-red-900/30 hover:text-red-700 dark:hover:text-red-300 active:bg-red-100 dark:active:bg-red-950/50 transition-all cursor-pointer min-h-[44px]"
             title="Clear current invoice details"
           >
-            <Eraser className="w-3.5 h-3.5 text-red-400" />
+            <Eraser className="w-3.5 h-3.5 text-red-400 dark:text-red-500" />
             Clear
           </button>
         </div>
@@ -1590,11 +1591,10 @@ export default function InvoiceEditorView({
                       </div>
                       <div className="space-y-1">
                         <label className="text-[9px] font-semibold text-slate-500 uppercase">Phone</label>
-                        <input
-                          type="text"
+                        <PhoneInputWithCountry
                           value={editingClient.phone}
-                          onChange={(e) => setEditingClient({ ...editingClient, phone: e.target.value })}
-                          className="w-full px-2 py-1 border border-slate-200 bg-white rounded text-xs"
+                          onChange={(newVal) => setEditingClient({ ...editingClient, phone: newVal })}
+                          className="w-full"
                         />
                       </div>
                       <div className="space-y-1">
@@ -1653,13 +1653,12 @@ export default function InvoiceEditorView({
                       </div>
                       <div className="space-y-1">
                         <label htmlFor="new-client-phone" className="text-[9px] font-semibold text-slate-500 uppercase">Phone</label>
-                        <input
-                          type="text"
+                        <PhoneInputWithCountry
                           id="new-client-phone"
                           value={newClientPhone}
-                          onChange={(e) => setNewClientPhone(e.target.value)}
-                          placeholder="e.g. +1 555-0100"
-                          className="w-full px-2 py-1 border border-slate-200 bg-white rounded text-xs"
+                          onChange={(newVal) => setNewClientPhone(newVal)}
+                          placeholder="e.g. 555-0100"
+                          className="w-full"
                         />
                       </div>
                       <div className="space-y-1">
@@ -1750,18 +1749,14 @@ export default function InvoiceEditorView({
                 <label htmlFor="customer-phone-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
                   Phone <span className="text-red-500 font-bold">*</span>
                 </label>
-                <input
-                  type="text"
+                <PhoneInputWithCountry
                   id="customer-phone-input"
                   required
                   value={draft.customer.phone}
-                  onChange={(e) => handleCustomerChange('phone', e.target.value)}
-                  placeholder="e.g. +1 555-987-6543"
-                  className={`w-full px-3 py-1.5 border rounded text-sm focus:outline-none transition-all ${
-                    errors.customerPhone 
-                      ? 'border-red-300 bg-red-50/10 focus:ring-1 focus:ring-red-500 focus:border-red-500' 
-                      : 'border-slate-200 focus:ring-1 focus:ring-blue-500 focus:border-blue-500'
-                  } text-slate-800 placeholder-slate-400`}
+                  onChange={(newVal) => handleCustomerChange('phone', newVal)}
+                  error={!!errors.customerPhone}
+                  placeholder="e.g. 555-987-6543"
+                  className="w-full"
                 />
                 {errors.customerPhone && (
                   <p className="text-[10px] text-red-500 font-semibold mt-0.5">{errors.customerPhone}</p>
@@ -1834,13 +1829,15 @@ export default function InvoiceEditorView({
                         <td className="py-2 px-2">
                           <div className="relative">
                             <input
-                              type="number"
-                              min="0"
-                              step="any"
+                              type="text"
+                              inputMode="decimal"
                               value={item.quantity || ''}
                               data-row-index={index}
                               data-cell-type="quantity"
-                              onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                              onChange={(e) => {
+                                const norm = normalizeNumericInput(e.target.value);
+                                handleItemChange(index, 'quantity', norm);
+                              }}
                               onKeyDown={(e) => handleKeyDown(e, index, 'quantity')}
                               placeholder="0"
                               className="w-full bg-transparent py-1 px-1.5 text-right border border-transparent rounded hover:border-slate-200 focus:border-blue-500 focus:bg-white focus:outline-none text-sm text-slate-800 font-mono transition-all"
@@ -1974,11 +1971,13 @@ export default function InvoiceEditorView({
                       
                       <div className="relative w-28">
                         <input
-                          type="number"
-                          min="0"
-                          step="any"
+                          type="text"
+                          inputMode="decimal"
                           value={draft.discountValue || ''}
-                          onChange={(e) => handleDiscountValueChange(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => {
+                            const norm = normalizeNumericInput(e.target.value);
+                            handleDiscountValueChange(parseNumericInput(norm));
+                          }}
                           placeholder="0"
                           className="w-full pr-7 pl-2 py-1 text-right text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-slate-800"
                         />
@@ -2028,11 +2027,13 @@ export default function InvoiceEditorView({
                       
                       <div className="relative w-28">
                         <input
-                          type="number"
-                          min="0"
-                          step="any"
+                          type="text"
+                          inputMode="decimal"
                           value={draft.discountValue || ''}
-                          onChange={(e) => handleDiscountValueChange(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => {
+                            const norm = normalizeNumericInput(e.target.value);
+                            handleDiscountValueChange(parseNumericInput(norm));
+                          }}
                           placeholder="0"
                           className="w-full pr-7 pl-2 py-1 text-right text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-slate-800"
                         />
@@ -2089,14 +2090,14 @@ export default function InvoiceEditorView({
                 <ArrowRight className="w-4 h-4" />
               </button>
               {isInvoiceEmpty && (
-                <p className="text-[11px] text-amber-600 text-center font-bold bg-amber-50 border border-amber-200 rounded-lg p-2 leading-tight">
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 text-center font-bold bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-lg p-2 leading-tight">
                   Add at least one line item first.
                 </p>
               )}
             </div>
 
             {!draft.customer.name && (
-              <div className="text-[10px] text-amber-700 bg-amber-50/70 p-3 rounded border border-amber-100 leading-normal">
+              <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50/70 dark:bg-amber-950/30 p-3 rounded border border-amber-100 dark:border-amber-900/50 leading-normal">
                 Please provide a <strong>Customer Name</strong> to generate the preview correctly.
               </div>
             )}
@@ -2272,7 +2273,7 @@ export default function InvoiceEditorView({
                 <div className="relative">
                   <AmountInput
                     id="modal-partial-amount-input"
-                    value={parseFloat(tempPartialAmount) || 0}
+                    value={parseNumericInput(tempPartialAmount)}
                     onChange={(val) => setTempPartialAmount(String(val))}
                     decimalPlaces={profile.currency.decimalPlaces}
                     locale={profile.currency.locale}
@@ -2284,7 +2285,7 @@ export default function InvoiceEditorView({
                     {profile.currency.symbol}
                   </div>
                 </div>
-                {parseFloat(tempPartialAmount) >= grandTotal && (
+                {parseNumericInput(tempPartialAmount) >= grandTotal && (
                   <p className="text-[10px] text-amber-600 font-medium">
                     Note: Amount is greater than or equal to total bill. This will fully pay the invoice.
                   </p>
@@ -2297,7 +2298,7 @@ export default function InvoiceEditorView({
                   <span className="font-semibold text-slate-500">Remaining Balance Due</span>
                   <span className="font-mono font-bold text-slate-800">
                     {(() => {
-                      const amount = parseFloat(tempPartialAmount) || 0;
+                      const amount = parseNumericInput(tempPartialAmount);
                       const remaining = Math.max(0, grandTotal - amount);
                       return formatMoney(remaining, profile.currency);
                     })()}
@@ -2306,7 +2307,7 @@ export default function InvoiceEditorView({
                 <div className="flex justify-between items-center border-t border-slate-200/60 pt-2 mt-1">
                   <span className="font-semibold text-slate-500">Calculated Invoice Status</span>
                   {(() => {
-                    const amount = parseFloat(tempPartialAmount) || 0;
+                    const amount = parseNumericInput(tempPartialAmount);
                     if (amount >= grandTotal) {
                       return (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase">
@@ -2378,12 +2379,12 @@ export default function InvoiceEditorView({
               <button
                 type="button"
                 onClick={() => {
-                  const amount = parseFloat(tempPartialAmount) || 0;
+                  const amount = parseNumericInput(tempPartialAmount);
                   handleApplyPartialModal(amount, modalSelectedMethod);
                 }}
-                disabled={!tempPartialAmount || parseFloat(tempPartialAmount) < 0}
+                disabled={!tempPartialAmount || parseNumericInput(tempPartialAmount) < 0}
                 className={`flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer text-center ${
-                  (!tempPartialAmount || parseFloat(tempPartialAmount) < 0) ? 'opacity-50 cursor-not-allowed' : ''
+                  (!tempPartialAmount || parseNumericInput(tempPartialAmount) < 0) ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
               >
                 Confirm & Apply

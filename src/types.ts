@@ -95,3 +95,12 @@ export interface AppSettings {
   profile: BusinessProfile;
   tax: TaxConfig;
 }
+
+export interface SavedInvoice {
+  id: string;
+  draft: InvoiceDraft;
+  profile: BusinessProfile;
+  tax: TaxConfig;
+  createdAt: string;
+}
+

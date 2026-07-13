@@ -12,9 +12,10 @@ import {
   Sparkles,
   Receipt,
   Sun,
-  Moon
+  Moon,
+  History
 } from 'lucide-react';
-import { BusinessProfile, TaxConfig, InvoiceDraft, Client } from './types';
+import { BusinessProfile, TaxConfig, InvoiceDraft, Client, SavedInvoice } from './types';
 import { 
   DEFAULT_PROFILE, 
   DEFAULT_TAX_CONFIG, 
@@ -23,10 +24,35 @@ import {
 import SettingsView from './components/SettingsView';
 import InvoiceEditorView from './components/InvoiceEditorView';
 import InvoicePreviewView from './components/InvoicePreviewView';
+import HistoryView from './components/HistoryView';
+
+const tabTransitionVariants = {
+  enter: (direction: number) => ({
+    x: direction > 0 ? 30 : direction < 0 ? -30 : 0,
+    opacity: 0,
+  }),
+  center: {
+    x: 0,
+    opacity: 1,
+  },
+  exit: (direction: number) => ({
+    x: direction > 0 ? -30 : direction < 0 ? 30 : 0,
+    opacity: 0,
+  }),
+};
 
 export default function App() {
   // 1. Tab State Management
-  const [activeTab, setActiveTab] = useState<'editor' | 'preview' | 'settings'>('editor');
+  const tabOrder = ['editor', 'preview', 'history', 'settings'] as const;
+  const [activeTab, setActiveTab] = useState<'editor' | 'preview' | 'history' | 'settings'>('editor');
+  const [direction, setDirection] = useState<number>(0);
+
+  const changeTab = (tab: 'editor' | 'preview' | 'history' | 'settings') => {
+    const prevIndex = tabOrder.indexOf(activeTab);
+    const nextIndex = tabOrder.indexOf(tab);
+    setDirection(nextIndex > prevIndex ? 1 : -1);
+    setActiveTab(tab);
+  };
 
   // Theme State Management (Loads from localStorage or defaults)
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -45,6 +71,15 @@ export default function App() {
       document.documentElement.classList.remove('dark');
       localStorage.setItem('fastinvo_theme', 'light');
     }
+
+    // Dynamic theme-color meta tag
+    let metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (!metaThemeColor) {
+      metaThemeColor = document.createElement('meta');
+      metaThemeColor.setAttribute('name', 'theme-color');
+      document.head.appendChild(metaThemeColor);
+    }
+    metaThemeColor.setAttribute('content', isDark ? '#020617' : '#f8fafc');
   }, [isDark]);
 
   const toggleTheme = () => {
@@ -143,6 +178,62 @@ export default function App() {
     localStorage.setItem('fastinvo_clients', JSON.stringify(clients));
   }, [clients]);
 
+  // Saved Invoices History (Loads from localStorage)
+  const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>(() => {
+    const saved = localStorage.getItem('fastinvo_history');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse saved invoices history', e);
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('fastinvo_history', JSON.stringify(savedInvoices));
+  }, [savedInvoices]);
+
+  const handleSaveInvoice = (invoiceDraft: InvoiceDraft, customProfile?: BusinessProfile, customTax?: TaxConfig) => {
+    const invoiceNum = invoiceDraft.metadata.invoiceNumber || 'DRAFT';
+    const profileToUse = customProfile || profile;
+    const taxToUse = customTax || tax;
+
+    setSavedInvoices(prev => {
+      // Check if invoice number already exists
+      const existingIndex = prev.findIndex(item => item.draft.metadata.invoiceNumber === invoiceNum);
+      const newInvoice: SavedInvoice = {
+        id: existingIndex >= 0 ? prev[existingIndex].id : `inv-${Date.now()}`,
+        draft: invoiceDraft,
+        profile: profileToUse,
+        tax: taxToUse,
+        createdAt: existingIndex >= 0 ? prev[existingIndex].createdAt : new Date().toISOString()
+      };
+
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = newInvoice;
+        return updated;
+      } else {
+        return [newInvoice, ...prev];
+      }
+    });
+  };
+
+  const handleDeleteInvoice = (id: string) => {
+    setSavedInvoices(prev => prev.filter(item => item.id !== id));
+  };
+
+  const handleRestoreInvoice = (invoice: SavedInvoice) => {
+    setDraft(invoice.draft);
+    setProfile(invoice.profile);
+    setTax(invoice.tax);
+    setPast([]);
+    setFuture([]);
+    changeTab('editor');
+  };
+
   // 8. Custom state setter for draft that registers changes to history
   const setDraftWithHistory = (newDraftOrFn: InvoiceDraft | ((prev: InvoiceDraft) => InvoiceDraft)) => {
     setDraft(prev => {
@@ -219,10 +310,10 @@ export default function App() {
     setPast([]);
     setFuture([]);
     
-    setActiveTab('editor');
+    changeTab('editor');
   };
 
-  const handleTabChange = (tab: 'editor' | 'preview' | 'settings') => {
+  const handleTabChange = (tab: 'editor' | 'preview' | 'history' | 'settings') => {
     if (tab === 'preview') {
       const name = draft.customer.name.trim();
       const phone = draft.customer.phone.trim();
@@ -230,7 +321,7 @@ export default function App() {
       
       if (!name || !phone || !address) {
         alert("Customer Name, Phone number, and Billing Address are mandatory. Please fill them in before previewing.");
-        setActiveTab('editor');
+        changeTab('editor');
         
         // Stagger focus slightly so React tab-switch completes
         setTimeout(() => {
@@ -250,24 +341,24 @@ export default function App() {
         return;
       }
     }
-    setActiveTab(tab);
+    changeTab(tab);
   };
 
   return (
-    <div className="min-h-screen bg-[#f9fafb] flex flex-col font-sans text-slate-900 transition-colors duration-150">
+    <div className="min-h-screen bg-[#f9fafb] dark:bg-slate-950 flex flex-col font-sans text-slate-900 dark:text-slate-100 transition-colors duration-150">
       
       {/* Sleek App Navigation Header (Omitted on print) */}
-      <header className="no-print bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm" id="app-chrome-header">
+      <header className="no-print bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm" id="app-chrome-header">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             
             {/* Minimal logo / understated wordmark */}
             <div className="flex items-center gap-12">
               <div className="flex items-center gap-2">
-                <div className="p-1 bg-slate-900 text-white rounded flex items-center justify-center">
+                <div className="p-1 bg-slate-900 dark:bg-slate-800 text-white rounded flex items-center justify-center">
                   <Receipt className="w-4 h-4" />
                 </div>
-                <span className="text-xl font-bold text-slate-800 tracking-tight font-sans">
+                <span className="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight font-sans">
                   FastInvo
                 </span>
               </div>
@@ -279,21 +370,21 @@ export default function App() {
                   id="tab-btn-editor"
                   className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
                     activeTab === 'editor'
-                      ? 'border-blue-600 text-blue-600 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
                   <span>Editor</span>
                 </button>
 
-                <button
+                 <button
                   onClick={() => handleTabChange('preview')}
                   id="tab-btn-preview"
                   className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
                     activeTab === 'preview'
-                      ? 'border-blue-600 text-blue-600 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <Eye className="w-3.5 h-3.5" />
@@ -301,12 +392,25 @@ export default function App() {
                 </button>
 
                 <button
+                  onClick={() => handleTabChange('history')}
+                  id="tab-btn-history"
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
+                    activeTab === 'history'
+                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>History</span>
+                </button>
+
+                <button
                   onClick={() => handleTabChange('settings')}
                   id="tab-btn-settings"
                   className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] ${
                     activeTab === 'settings'
-                      ? 'border-blue-600 text-blue-600 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <SettingsIcon className="w-3.5 h-3.5" />
@@ -346,13 +450,15 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8" id="app-main-content">
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={activeTab}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.15 }}
+            custom={direction}
+            variants={tabTransitionVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: 0.2, ease: "easeInOut" }}
             className="w-full h-full"
           >
             {activeTab === 'editor' && (
@@ -378,8 +484,17 @@ export default function App() {
                 draft={draft}
                 profile={profile}
                 tax={tax}
-                onEdit={() => setActiveTab('editor')}
+                onEdit={() => changeTab('editor')}
                 onNewInvoice={handleNewInvoice}
+                onSaveToHistory={handleSaveInvoice}
+              />
+            )}
+
+            {activeTab === 'history' && (
+              <HistoryView
+                invoices={savedInvoices}
+                onDeleteInvoice={handleDeleteInvoice}
+                onRestoreInvoice={handleRestoreInvoice}
               />
             )}
 
@@ -398,7 +513,7 @@ export default function App() {
       </main>
 
       {/* Subtle Footer (Omitted on print) */}
-      <footer className="no-print bg-white border-t border-gray-200/60 py-5 text-center text-xs text-gray-400" id="app-footer">
+      <footer className="no-print bg-white dark:bg-slate-900 border-t border-gray-200/60 dark:border-slate-800 py-5 text-center text-xs text-gray-400 dark:text-slate-500" id="app-footer">
         <div className="max-w-7xl mx-auto px-4">
           <p>© {new Date().getFullYear()} FastInvo. Fast, private, and offline-first invoice builder.</p>
         </div>

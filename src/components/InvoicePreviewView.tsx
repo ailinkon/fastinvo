@@ -10,6 +10,8 @@ import { formatMoney } from '../constants';
 import { calculateInvoiceTotals, lineTotal } from '../utils/calculations';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { Capacitor } from '@capacitor/core';
+import { exportPdf } from '../utils/exportPdf';
 
 interface InvoicePreviewViewProps {
   draft: InvoiceDraft;
@@ -17,9 +19,10 @@ interface InvoicePreviewViewProps {
   tax: TaxConfig;
   onEdit: () => void;
   onNewInvoice?: () => void;
+  onSaveToHistory?: (draft: InvoiceDraft, profile: BusinessProfile, tax: TaxConfig) => void;
 }
 
-export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewInvoice }: InvoicePreviewViewProps) {
+export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewInvoice, onSaveToHistory }: InvoicePreviewViewProps) {
   const validItems = draft.items.filter(item => item.description.trim() !== '' || item.unitPrice > 0);
   const grossSubtotal = Math.round((validItems.reduce((sum, i) => sum + lineTotal(i), 0) + Number.EPSILON) * 100) / 100;
 
@@ -49,6 +52,17 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailAddress, setEmailAddress] = useState(draft.customer.email || '');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pdfError) {
+      const timer = setTimeout(() => {
+        setPdfError(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [pdfError]);
 
   useEffect(() => {
     if (draft.customer.email) {
@@ -56,7 +70,7 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
     }
   }, [draft.customer.email]);
 
-  const generatePDFBlob = async (): Promise<Blob | null> => {
+  const generatePDFDoc = async (): Promise<jsPDF | null> => {
     const element = document.getElementById('printable-invoice-canvas');
     if (!element) return null;
 
@@ -153,24 +167,32 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
       heightLeft -= pdfHeight;
     }
 
-    return pdf.output('blob');
+    return pdf;
   };
 
   const handleDownloadPDF = async () => {
     try {
       setIsGeneratingPDF(true);
-      const blob = await generatePDFBlob();
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
+      // Auto-save to history on download
+      onSaveToHistory?.(draft, profile, tax);
+      setSaveStatus('saved');
+
+      const doc = await generatePDFDoc();
+      if (!doc) return;
       const invoiceNo = draft.metadata.invoiceNumber || 'draft';
-      a.download = `invoice-${invoiceNo}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const fileName = invoiceNo.toUpperCase().startsWith('INV') ? `${invoiceNo}.pdf` : `INV-${invoiceNo}.pdf`;
+
+      await exportPdf(doc, fileName);
     } catch (err) {
       console.error('Error downloading PDF:', err);
-      alert('Could not download PDF. Please try again.');
+      const isCancellation = err instanceof Error && (
+        err.name === 'AbortError' || 
+        err.message.toLowerCase().includes('cancel') || 
+        err.message.toLowerCase().includes('abort')
+      );
+      if (!isCancellation) {
+        setPdfError('Could not export PDF');
+      }
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -179,30 +201,44 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
   const handleSharePDF = async () => {
     try {
       setIsGeneratingPDF(true);
-      const blob = await generatePDFBlob();
-      if (!blob) return;
+      // Auto-save to history on share
+      onSaveToHistory?.(draft, profile, tax);
+      setSaveStatus('saved');
+
+      const doc = await generatePDFDoc();
+      if (!doc) return;
       const invoiceNo = draft.metadata.invoiceNumber || 'draft';
-      const file = new File([blob], `invoice-${invoiceNo}.pdf`, { type: 'application/pdf' });
-      
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Invoice #${invoiceNo}`,
-          text: `Please find attached Invoice #${invoiceNo}.`,
-        });
+      const fileName = invoiceNo.toUpperCase().startsWith('INV') ? `${invoiceNo}.pdf` : `INV-${invoiceNo}.pdf`;
+
+      if (Capacitor.isNativePlatform()) {
+        await exportPdf(doc, fileName);
       } else {
-        // Fallback to downloading
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `invoice-${invoiceNo}.pdf`;
-        a.click();
-        URL.revokeObjectURL(url);
-        alert('Web Share API with file attachments is not supported on this browser. The PDF has been downloaded to your device instead.');
+        // Web: keep existing distinct behavior
+        const blob = doc.output('blob');
+        const file = new File([blob], fileName, { type: 'application/pdf' });
+        
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `Invoice #${invoiceNo}`,
+            text: `Please find attached Invoice #${invoiceNo}.`,
+          });
+        } else {
+          // Fallback to downloading
+          await exportPdf(doc, fileName);
+          setPdfError('Web Share API with file attachments is not supported on this browser. The PDF has been downloaded to your device instead.');
+        }
       }
     } catch (err) {
       console.error('Error sharing PDF:', err);
-      handleDownloadPDF();
+      const isCancellation = err instanceof Error && (
+        err.name === 'AbortError' || 
+        err.message.toLowerCase().includes('cancel') || 
+        err.message.toLowerCase().includes('abort')
+      );
+      if (!isCancellation) {
+        setPdfError('Could not export PDF');
+      }
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -224,6 +260,9 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
   };
 
   const handlePrint = () => {
+    // Auto-save to history on print
+    onSaveToHistory?.(draft, profile, tax);
+    setSaveStatus('saved');
     window.print();
   };
 
@@ -464,15 +503,15 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
     <div className="space-y-6 max-w-4xl mx-auto" id="invoice-preview-view">
       
       {/* Visual notification toolbar - Only Back to Editor button in top right corner */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white border border-slate-200 shadow-sm p-4 rounded gap-4 no-print" id="invoice-preview-top-toolbar">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 rounded gap-4 no-print" id="invoice-preview-top-toolbar">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-slate-50 text-slate-500 rounded">
-            <Eye className="w-5 h-5 text-blue-600" />
+          <div className="p-2 bg-slate-50 dark:bg-slate-950 text-slate-500 rounded">
+            <Eye className="w-5 h-5 text-blue-600 dark:text-blue-400" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-800">Document Live Preview</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Template: <strong className="capitalize text-blue-600">{selectedTemplate.replace('-', ' ')}</strong>. Prints exactly as rendered with zero app chrome.
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">Document Live Preview</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Template: <strong className="capitalize text-blue-600 dark:text-blue-400">{selectedTemplate.replace('-', ' ')}</strong>. Prints exactly as rendered with zero app chrome.
             </p>
           </div>
         </div>
@@ -482,7 +521,7 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
             type="button"
             onClick={onEdit}
             id="preview-btn-back-edit"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer min-h-[36px]"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[36px]"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to Editor
@@ -492,8 +531,8 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
 
       {/* Warning if fields are blank */}
       {!draft.customer.name && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs p-3 rounded flex items-start gap-2.5 no-print">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-300 text-xs p-3 rounded flex items-start gap-2.5 no-print">
+          <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
             <span className="font-semibold">Missing Customer Information:</span> Please navigate back to the **Invoice Editor** and add a Customer Name so the invoice block looks complete.
           </div>
@@ -1431,25 +1470,29 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => setShowPrintPreview(true)}
-                id="paid-btn-print-preview"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[38px]"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                Print Preview (A4)
-              </button>
+              {!Capacitor.isNativePlatform() && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintPreview(true)}
+                    id="paid-btn-print-preview"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[38px]"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Print Preview (A4)
+                  </button>
 
-              <button
-                type="button"
-                onClick={handlePrint}
-                id="paid-btn-proceed-print"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[38px]"
-              >
-                <Printer className="w-3.5 h-3.5 text-emerald-400" />
-                Proceed to Print
-              </button>
+                  <button
+                    type="button"
+                    onClick={handlePrint}
+                    id="paid-btn-proceed-print"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[38px]"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                    Proceed to Print
+                  </button>
+                </>
+              )}
 
               <button
                 type="button"
@@ -1472,6 +1515,25 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
                 <Download className="w-3.5 h-3.5" />
                 Download PDF
               </button>
+
+              {onSaveToHistory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSaveToHistory(draft, profile, tax);
+                    setSaveStatus('saved');
+                  }}
+                  id="paid-btn-save-history"
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg transition-colors cursor-pointer min-h-[38px] ${
+                    saveStatus === 'saved'
+                      ? 'bg-emerald-100 text-emerald-950 border border-emerald-300'
+                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <CheckCircle className={`w-3.5 h-3.5 ${saveStatus === 'saved' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                  {saveStatus === 'saved' ? 'Saved to History' : 'Save to History'}
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -1497,25 +1559,29 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => setShowPrintPreview(true)}
-                id="unpaid-btn-print-preview"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[38px]"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                Print Preview (A4)
-              </button>
+              {!Capacitor.isNativePlatform() && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintPreview(true)}
+                    id="unpaid-btn-print-preview"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer min-h-[38px]"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Print Preview (A4)
+                  </button>
 
-              <button
-                type="button"
-                onClick={handlePrint}
-                id="unpaid-btn-proceed-print"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[38px]"
-              >
-                <Printer className="w-3.5 h-3.5 text-blue-400" />
-                Proceed to Print
-              </button>
+                  <button
+                    type="button"
+                    onClick={handlePrint}
+                    id="unpaid-btn-proceed-print"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer min-h-[38px]"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-blue-400" />
+                    Proceed to Print
+                  </button>
+                </>
+              )}
 
               <button
                 type="button"
@@ -1538,6 +1604,25 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
                 <Download className="w-3.5 h-3.5" />
                 Download PDF
               </button>
+
+              {onSaveToHistory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSaveToHistory(draft, profile, tax);
+                    setSaveStatus('saved');
+                  }}
+                  id="unpaid-btn-save-history"
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-lg transition-colors cursor-pointer min-h-[38px] ${
+                    saveStatus === 'saved'
+                      ? 'bg-emerald-100 text-emerald-955 border border-emerald-350'
+                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <CheckCircle className={`w-3.5 h-3.5 ${saveStatus === 'saved' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                  {saveStatus === 'saved' ? 'Saved to History' : 'Save to History'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1630,6 +1715,17 @@ export default function InvoicePreviewView({ draft, profile, tax, onEdit, onNewI
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Toast Alert */}
+      {pdfError && (
+        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 dark:bg-slate-800 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 max-w-sm animate-fadeIn" id="pdf-error-toast">
+          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+          <span className="text-xs font-medium font-sans leading-normal">{pdfError}</span>
+          <button onClick={() => setPdfError(null)} className="ml-auto text-slate-400 hover:text-white transition-colors p-1 rounded hover:bg-slate-800 dark:hover:bg-slate-700">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>
