@@ -18,14 +18,15 @@ import {
   Eye,
   CreditCard,
   Smartphone,
+  Nfc,
   ArrowRight,
   ArrowLeft
 } from 'lucide-react';
-import { InvoiceDraft, LineItem, BusinessProfile, TaxConfig, DiscountType, Client } from '../types';
-import { formatMoney, getTodayDateString, DEFAULT_INVOICE_DRAFT } from '../constants';
-import { calculateInvoiceTotals, lineTotal } from '../utils/calculations';
+import { InvoiceDraft, LineItem, BusinessProfile, TaxConfig, DiscountType, Client, SavedItem } from '../types';
+import { formatMoney, getTodayDateString, getFutureDateString, DEFAULT_INVOICE_DRAFT } from '../constants';
+import { calculateInvoiceTotals, lineTotal, isRealLineItem, filterRealItems } from '../utils/calculations';
 import { normalizeNumericInput, parseNumericInput } from '../utils/normalizeNumericInput';
-import { Undo2, Redo2, BookOpen, UserPlus, Save, Check, X, Edit, Trash, Search, Building2, CheckCircle, HelpCircle, Sparkles } from 'lucide-react';
+import { Undo2, Redo2, BookOpen, UserPlus, Save, Check, X, Edit, Trash, Search, Building2, CheckCircle, HelpCircle, Sparkles, AlertCircle } from 'lucide-react';
 import { BANGLADESHI_BANKS, generateMockRoutingNumber } from '../utils/bankData';
 import PhoneInputWithCountry from './PhoneInputWithCountry';
 
@@ -34,6 +35,7 @@ const MFS_OPTIONS = ['Bkash', 'Celsin', 'Nagad', 'Rocket', 'Upay', 'M-Cash'];
 const PAYMENT_METHOD_OPTIONS = [
   { id: 'Cash', name: 'Cash', desc: 'Direct physical currency' },
   { id: 'Card', name: 'Card', desc: 'Credit, debit, or smart card' },
+  { id: 'Tap-to-Pay', name: 'Tap-to-Pay', desc: 'NFC contactless mobile or card tap' },
   { id: 'Bank transfer', name: 'Bank transfer', desc: 'ACH, direct deposit, or wire' },
   { id: 'MFS Transfer', name: 'MFS Transfer', desc: 'Mobile personal number transfer' },
   { id: 'MFS merchant pay', name: 'MFS merchant pay', desc: 'Mobile merchant counter payment' }
@@ -144,6 +146,8 @@ interface InvoiceEditorViewProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  savedItems?: SavedItem[];
+  setSavedItems?: React.Dispatch<React.SetStateAction<SavedItem[]>>;
 }
 
 export default function InvoiceEditorView({
@@ -159,12 +163,24 @@ export default function InvoiceEditorView({
   canUndo,
   canRedo,
   onUndo,
-  onRedo
+  onRedo,
+  savedItems,
+  setSavedItems
 }: InvoiceEditorViewProps) {
   
   // Track error warnings for inputs
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [paymentSubTab, setPaymentSubTab] = React.useState<'methods' | 'mfs' | 'instructions'>('methods');
+
+  // Ensure there is at least one editable item row in the draft
+  useEffect(() => {
+    if (!draft.items || draft.items.length === 0) {
+      setDraft(prev => ({
+        ...prev,
+        items: [{ id: Math.random().toString(36).substring(2, 9), description: '', quantity: 1, unitPrice: 0 }]
+      }));
+    }
+  }, [draft.items, setDraft]);
 
   // Checkout & Interactive Payment Wizard states
   const [showPaymentScreen, setShowPaymentScreen] = React.useState(false);
@@ -178,6 +194,7 @@ export default function InvoiceEditorView({
   // Split payment state
   const [splitAmounts, setSplitAmounts] = React.useState<Record<string, string>>({
     'Cash': '',
+    'Tap-to-Pay': '',
     'Bank Transfer': '',
     'EFT': '',
     'MFS': ''
@@ -190,12 +207,35 @@ export default function InvoiceEditorView({
   const [showCustomBank, setShowCustomBank] = React.useState(false);
   const [showCustomBranch, setShowCustomBranch] = React.useState(false);
 
+  // Saved Items suggestion dropdown state
+  const [activeItemFocusIndex, setActiveItemFocusIndex] = React.useState<number | null>(null);
+
   // Prompts and confirmation notices
   const [showSaveClientPrompt, setShowSaveClientPrompt] = React.useState(false);
   const [paymentMethodPrompt, setPaymentMethodPrompt] = React.useState<{ id: string; name: string } | null>(null);
   const [paymentNotice, setPaymentNotice] = React.useState<string | null>(null);
 
   const currentMethods = profile.paymentMethods || [];
+
+  const isMethodChecked = (id: string): boolean => {
+    const activeMethods = profile.paymentMethods || [];
+    if (!activeMethods || activeMethods.length === 0) return false;
+
+    const idLower = id.toLowerCase().trim();
+
+    return activeMethods.some(m => {
+      const mLower = m.toLowerCase().trim();
+      if (mLower === idLower) return true;
+
+      if (idLower === 'cash' && mLower.includes('cash')) return true;
+      if (idLower === 'card' && mLower.includes('card')) return true;
+      if ((idLower === 'tap-to-pay' || idLower === 'tap to pay') && (mLower.includes('tap') || mLower.includes('nfc'))) return true;
+      if ((idLower.includes('bank') || idLower === 'eft') && (mLower.includes('bank') || mLower.includes('transfer') || mLower.includes('eft'))) return true;
+      if (idLower.includes('mfs') && mLower.includes('mfs')) return true;
+
+      return false;
+    });
+  };
 
   const handleTogglePaymentMethod = (methodId: string) => {
     let updated: string[];
@@ -319,11 +359,9 @@ export default function InvoiceEditorView({
   };
 
   const handleDeleteClient = (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete "${name}" from saved clients?`)) {
-      setClients(prev => prev.filter(c => c.id !== id));
-      setSuccessMsg(`Deleted client: ${name}`);
-      setTimeout(() => setSuccessMsg(''), 3000);
-    }
+    setClients(prev => prev.filter(c => c.id !== id));
+    setSuccessMsg(`Deleted client: ${name}`);
+    setTimeout(() => setSuccessMsg(''), 3000);
   };
 
   // Checkout / Payment Wizard action handlers
@@ -437,7 +475,7 @@ export default function InvoiceEditorView({
 
   // Calculations derived from current state
   const { items } = draft;
-  const validItems = draft.items.filter(item => item.description.trim() !== '' || item.unitPrice > 0);
+  const validItems = filterRealItems(draft.items);
   const grossSubtotal = Math.round((validItems.reduce((sum, i) => sum + lineTotal(i), 0) + Number.EPSILON) * 100) / 100;
 
   const { subtotal: netSubtotal, discount: netDiscount, taxAmount, grandTotal } =
@@ -545,6 +583,24 @@ export default function InvoiceEditorView({
       return cpy;
     });
 
+    // Passive learning check: if any line item is not yet saved, save it passively or offer toast
+    if (setSavedItems && savedItems) {
+      const existingNames = new Set(savedItems.map(si => si.name.toLowerCase().trim()));
+      const unSaved = filterRealItems(draft.items).filter(i =>
+        i.description.trim() && !existingNames.has(i.description.toLowerCase().trim())
+      );
+      if (unSaved.length > 0) {
+        // Auto-add new items to savedItems passively for smart reuse
+        const newSavedItems: SavedItem[] = unSaved.map(item => ({
+          id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+          name: item.description.trim(),
+          defaultPrice: item.unitPrice,
+          defaultTaxRate: tax.taxEnabled ? tax.taxRate : undefined
+        }));
+        setSavedItems(prev => [...prev, ...newSavedItems]);
+      }
+    }
+
     onPreview();
   };
 
@@ -599,12 +655,14 @@ export default function InvoiceEditorView({
     updated[index] = { ...updated[index], [field]: typedValue };
     
     // Auto-add rows logic:
-    // If we're modifying the very last item, and it's not empty, append a new empty row
+    // If modifying the last item and it has valid content (real item), append a new empty row
+    // but ONLY IF the last item isn't already an untouched empty row (prevents consecutive empty rows)
     const isLast = index === updated.length - 1;
     const item = updated[index];
-    const hasContent = item.description.trim() !== '' || item.unitPrice > 0;
-    
-    if (isLast && hasContent) {
+    const hasContent = isRealLineItem(item);
+    const lastRowIsUntouched = updated.length > 0 && !isRealLineItem(updated[updated.length - 1]);
+
+    if (isLast && hasContent && !lastRowIsUntouched) {
       updated.push({
         id: Math.random().toString(36).substring(2, 9),
         description: '',
@@ -613,12 +671,28 @@ export default function InvoiceEditorView({
       });
     }
 
-    setDraft({ ...draft, items: updated });
+    // Deduplicate consecutive empty/untouched rows if any exist
+    const cleanedRows: LineItem[] = [];
+    for (let i = 0; i < updated.length; i++) {
+      const currentIsUntouched = !isRealLineItem(updated[i]);
+      const prevIsUntouched = cleanedRows.length > 0 && !isRealLineItem(cleanedRows[cleanedRows.length - 1]);
+      if (currentIsUntouched && prevIsUntouched) {
+        continue;
+      }
+      cleanedRows.push(updated[i]);
+    }
+
+    setDraft({ ...draft, items: cleanedRows });
   };
 
   // Explicit add row button (as alternative)
   const addExplicitRow = () => {
     const updated = [...draft.items];
+    const lastRow = updated[updated.length - 1];
+    if (lastRow && !isRealLineItem(lastRow)) {
+      // Last row is already an empty/untouched placeholder row, do not add another empty row
+      return;
+    }
     updated.push({
       id: Math.random().toString(36).substring(2, 9),
       description: '',
@@ -632,9 +706,21 @@ export default function InvoiceEditorView({
     let updated = [...draft.items];
     updated.splice(index, 1);
     
-    // Ensure there is always at least one row in the table
+    // Deduplicate consecutive empty rows
+    const cleanedRows: LineItem[] = [];
+    for (let i = 0; i < updated.length; i++) {
+      const currentIsUntouched = !isRealLineItem(updated[i]);
+      const prevIsUntouched = cleanedRows.length > 0 && !isRealLineItem(cleanedRows[cleanedRows.length - 1]);
+      if (currentIsUntouched && prevIsUntouched) {
+        continue;
+      }
+      cleanedRows.push(updated[i]);
+    }
+    updated = cleanedRows;
+
+    // Ensure there is always at least one row in the table for editing
     if (updated.length === 0) {
-      updated = [{ id: '1', description: '', quantity: 1, unitPrice: 0 }];
+      updated = [{ id: Math.random().toString(36).substring(2, 9), description: '', quantity: 1, unitPrice: 0 }];
     }
     
     // Clean errors for deleted row
@@ -691,10 +777,10 @@ export default function InvoiceEditorView({
   };
 
   const clearInvoice = () => {
-    if (window.confirm("Are you sure you want to clear this draft invoice? Your company settings will be kept, but all line items and customer info will be wiped.")) {
-      setDraft(DEFAULT_INVOICE_DRAFT(`${profile.invoicePrefix}${profile.nextInvoiceNumber}`));
-      setErrors({});
-    }
+    setDraft(DEFAULT_INVOICE_DRAFT(`${profile.invoicePrefix}${profile.nextInvoiceNumber}`));
+    setErrors({});
+    setSuccessMsg("Cleared draft invoice");
+    setTimeout(() => setSuccessMsg(''), 3000);
   };
 
   if (showPaymentScreen) {
@@ -732,46 +818,63 @@ export default function InvoiceEditorView({
             <div className="space-y-4">
               <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Select Payment Option</span>
               
-              <div className="grid grid-cols-2 gap-3.5">
-                <button
-                  type="button"
-                  onClick={() => handleSelectMethod('Cash')}
-                  className="p-5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all cursor-pointer text-center group active:scale-95 shadow-xs"
-                >
-                  <Coins className="w-6 h-6 text-emerald-500 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Cash</span>
-                </button>
+              {(() => {
+                const buttons = [
+                  { id: 'Cash', name: 'Cash', icon: Coins, color: 'text-emerald-500' },
+                  { id: 'Card', name: 'Card', icon: CreditCard, color: 'text-blue-500' },
+                  { id: 'Tap-to-Pay', name: 'Tap-to-Pay', icon: Nfc, color: 'text-amber-500' },
+                  { id: 'Bank Transfer', name: 'Bank Transfer', icon: Building2, color: 'text-blue-600' },
+                  { id: 'EFT', name: 'EFT', icon: CreditCard, color: 'text-purple-500' },
+                  { id: 'MFS', name: 'MFS', icon: Smartphone, color: 'text-indigo-500' }
+                ].filter(b => isMethodChecked(b.id));
 
-                <button
-                  type="button"
-                  onClick={() => handleSelectMethod('Bank Transfer')}
-                  className="p-5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all cursor-pointer text-center group active:scale-95 shadow-xs"
-                >
-                  <Building2 className="w-6 h-6 text-blue-500 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Bank Transfer</span>
-                </button>
+                if (buttons.length === 0) {
+                  return (
+                    <div className="p-6 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-center space-y-3">
+                      <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-slate-700">No Payment Methods Enabled in Settings</p>
+                        <p className="text-[11px] text-slate-500">Please go to Settings &gt; Payment Methods &amp; Settings to check accepted payment options.</p>
+                      </div>
+                    </div>
+                  );
+                }
 
-                <button
-                  type="button"
-                  onClick={() => handleSelectMethod('EFT')}
-                  className="p-5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all cursor-pointer text-center group active:scale-95 shadow-xs"
-                >
-                  <CreditCard className="w-6 h-6 text-purple-500 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">EFT</span>
-                </button>
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+                    {buttons.map((btn) => {
+                      const IconComp = btn.icon;
+                      if (btn.id === 'MFS') {
+                        return (
+                          <button
+                            key={btn.id}
+                            type="button"
+                            onClick={() => setSelectedPaymentMethodOption(selectedPaymentMethodOption === 'MFS' ? '' : 'MFS')}
+                            className={`p-5 hover:bg-slate-50 border rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all cursor-pointer text-center group active:scale-95 shadow-xs ${
+                              selectedPaymentMethodOption === 'MFS' ? 'border-indigo-500 bg-indigo-50/10 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300 bg-white'
+                            }`}
+                          >
+                            <IconComp className={`w-6 h-6 ${btn.color} group-hover:scale-110 transition-transform`} />
+                            <span className="text-xs font-bold text-slate-800">{btn.name}</span>
+                          </button>
+                        );
+                      }
 
-                {/* MFS Option Button */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedPaymentMethodOption(selectedPaymentMethodOption === 'MFS' ? '' : 'MFS')}
-                  className={`p-5 hover:bg-slate-50 border rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all cursor-pointer text-center group active:scale-95 shadow-xs ${
-                    selectedPaymentMethodOption === 'MFS' ? 'border-indigo-500 bg-indigo-50/10 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300 bg-white'
-                  }`}
-                >
-                  <Smartphone className="w-6 h-6 text-indigo-500 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">MFS</span>
-                </button>
-              </div>
+                      return (
+                        <button
+                          key={btn.id}
+                          type="button"
+                          onClick={() => handleSelectMethod(btn.id)}
+                          className="p-5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all cursor-pointer text-center group active:scale-95 shadow-xs"
+                        >
+                          <IconComp className={`w-6 h-6 ${btn.color} group-hover:scale-110 transition-transform`} />
+                          <span className="text-xs font-bold text-slate-800">{btn.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Sub-MFS options display if MFS is selected */}
               {selectedPaymentMethodOption === 'MFS' && (
@@ -790,28 +893,49 @@ export default function InvoiceEditorView({
                     ))}
                   </div>
                 </div>
-              )}              {/* Partial Payment Option Button */}
-              <div className="pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsPartialMode(true);
-                    setSplitAmounts({
-                      'Cash': (grandTotal / 2).toFixed(2),
-                      'Bank Transfer': '',
-                      'EFT': '',
-                      'MFS': ''
-                    });
-                    setSplitMfsWallet('bKash');
-                    setPaymentStep('partial_setup');
-                  }}
-                  className="w-full py-4 px-4 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-95"
-                >
-                  <Percent className="w-4.5 h-4.5 text-amber-600 animate-pulse animate-duration-1000" />
-                  <span>Pay Partially / Customize Amount</span>
-                </button>
+              )}              {/* Save Invoice & Partial Payment Option Buttons */}
+              <div className="pt-4 border-t border-slate-100 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Save Invoice Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSuccessMsg("Invoice saved successfully!");
+                      setTimeout(() => setSuccessMsg(''), 3000);
+                      if (onPreview) {
+                        onPreview();
+                      } else {
+                        setShowPaymentScreen(false);
+                      }
+                    }}
+                    className="py-4 px-4 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-95"
+                  >
+                    <Save className="w-4.5 h-4.5 text-emerald-600" />
+                    <span>Save Invoice</span>
+                  </button>
+
+                  {/* Pay Partially / Customize Amount Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPartialMode(true);
+                      setSplitAmounts({
+                        'Cash': (grandTotal / 2).toFixed(2),
+                        'Bank Transfer': '',
+                        'EFT': '',
+                        'MFS': ''
+                      });
+                      setSplitMfsWallet('bKash');
+                      setPaymentStep('partial_setup');
+                    }}
+                    className="py-4 px-4 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-95"
+                  >
+                    <Percent className="w-4.5 h-4.5 text-amber-600 animate-pulse animate-duration-1000" />
+                    <span>Pay Partially / Customize Amount</span>
+                  </button>
+                </div>
                 <p className="text-[10px] text-slate-400 text-center mt-2 font-medium">
-                  Select this to enter specific receipt amounts across different options and calculate total balance.
+                  Save invoice directly or select partial payment to enter specific receipt amounts across options.
                 </p>
               </div>
             </div>
@@ -841,12 +965,7 @@ export default function InvoiceEditorView({
 
               {/* Dynamic calculated Sum Total Received */}
               {(() => {
-                const totalSplitReceived = (
-                  (parseNumericInput(splitAmounts['Cash']) || 0) +
-                  (parseNumericInput(splitAmounts['Bank Transfer']) || 0) +
-                  (parseNumericInput(splitAmounts['EFT']) || 0) +
-                  (parseNumericInput(splitAmounts['MFS']) || 0)
-                );
+                const totalSplitReceived = Object.keys(splitAmounts).reduce((sum, k) => sum + (parseNumericInput(splitAmounts[k]) || 0), 0);
                 return (
                   <div className="bg-blue-50/45 border border-blue-150 rounded-xl p-4 flex justify-between items-center shadow-2xs">
                     <div>
@@ -871,10 +990,14 @@ export default function InvoiceEditorView({
                 <div className="space-y-3">
                   {[
                     { id: 'Cash', icon: Coins, color: 'text-emerald-500', bg: 'bg-emerald-50/30' },
+                    { id: 'Card', icon: CreditCard, color: 'text-indigo-500', bg: 'bg-indigo-50/30' },
+                    { id: 'Tap-to-Pay', icon: Nfc, color: 'text-amber-500', bg: 'bg-amber-50/30' },
                     { id: 'Bank Transfer', icon: Building2, color: 'text-blue-500', bg: 'bg-blue-50/30' },
                     { id: 'EFT', icon: CreditCard, color: 'text-purple-500', bg: 'bg-purple-50/30' },
                     { id: 'MFS', icon: Smartphone, color: 'text-indigo-500', bg: 'bg-indigo-50/30' }
-                  ].map((opt) => {
+                  ]
+                  .filter(opt => isMethodChecked(opt.id))
+                  .map((opt) => {
                     const IconComp = opt.icon;
                     const val = splitAmounts[opt.id] || '';
                     
@@ -1411,51 +1534,152 @@ export default function InvoiceEditorView({
           
           {/* Card: Document Details */}
           <div className="bg-white rounded border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4">
-            <div className="flex items-center gap-2 text-slate-800 font-semibold pb-2 border-b border-slate-100">
-              <Calendar className="w-4 h-4 text-slate-400" />
-              <h3 className="text-xs uppercase tracking-wider text-slate-500 font-bold">Document Details</h3>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-slate-800 font-semibold">
+                <Calendar className="w-4 h-4 text-slate-400" />
+                <h3 className="text-xs uppercase tracking-wider text-slate-500 font-bold">Document Details</h3>
+              </div>
+
+              {/* Document Type Selector Toggle */}
+              <div className="flex items-center p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200/80 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextInvNum = draft.metadata.invoiceNumber || `${profile.invoicePrefix}${profile.nextInvoiceNumber}`;
+                    setDraft(prev => ({
+                      ...prev,
+                      documentType: 'invoice',
+                      metadata: {
+                        ...prev.metadata,
+                        invoiceNumber: nextInvNum,
+                        dueDate: prev.metadata.dueDate || getFutureDateString(14),
+                      }
+                    }));
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                    (draft.documentType || 'invoice') === 'invoice'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  Invoice
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextQuoNum = draft.metadata.quotationNumber || `${profile.quotationPrefix || 'QUO-'}${profile.nextQuotationNumber || 1001}`;
+                    setDraft(prev => ({
+                      ...prev,
+                      documentType: 'quotation',
+                      quotationStatus: prev.quotationStatus || 'Draft',
+                      metadata: {
+                        ...prev.metadata,
+                        quotationNumber: nextQuoNum,
+                        validUntil: prev.metadata.validUntil || getFutureDateString(14),
+                      }
+                    }));
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                    draft.documentType === 'quotation'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  Quotation
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="space-y-1">
-                <label htmlFor="invoice-number-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Invoice Number</label>
-                <input
-                  type="text"
-                  id="invoice-number-input"
-                  value={draft.metadata.invoiceNumber}
-                  onChange={(e) => handleMetadataChange('invoiceNumber', e.target.value)}
-                  placeholder="INV-1001"
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 font-mono transition-all"
-                />
-              </div>
+              {draft.documentType === 'quotation' ? (
+                <>
+                  <div className="space-y-1">
+                    <label htmlFor="quotation-number-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                      Quotation Number
+                    </label>
+                    <input
+                      type="text"
+                      id="quotation-number-input"
+                      value={draft.metadata.quotationNumber || ''}
+                      onChange={(e) => handleMetadataChange('quotationNumber', e.target.value)}
+                      placeholder="QUO-1001"
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 text-slate-800 font-mono transition-all"
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label htmlFor="invoice-issue-date-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Issue Date</label>
-                <input
-                  type="date"
-                  id="invoice-issue-date-input"
-                  value={draft.metadata.issueDate}
-                  onChange={(e) => handleMetadataChange('issueDate', e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 transition-all"
-                />
-              </div>
+                  <div className="space-y-1">
+                    <label htmlFor="invoice-issue-date-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Issue Date</label>
+                    <input
+                      type="date"
+                      id="invoice-issue-date-input"
+                      value={draft.metadata.issueDate}
+                      onChange={(e) => handleMetadataChange('issueDate', e.target.value)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 text-slate-700 transition-all"
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label htmlFor="invoice-due-date-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Due Date <span className="text-slate-400 text-[10px] font-normal">(Optional)</span></label>
-                <input
-                  type="date"
-                  id="invoice-due-date-input"
-                  value={draft.metadata.dueDate || ''}
-                  min={draft.metadata.issueDate}
-                  onChange={(e) => handleMetadataChange('dueDate', e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 transition-all"
-                />
-                {draft.metadata.dueDate && draft.metadata.dueDate < draft.metadata.issueDate && (
-                  <p className="text-[11px] text-red-600 font-bold mt-1">
-                    Due date is before issue date
-                  </p>
-                )}
-              </div>
+                  <div className="space-y-1">
+                    <label htmlFor="quotation-valid-until-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                      Valid Until <span className="text-amber-600 font-bold">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      id="quotation-valid-until-input"
+                      value={draft.metadata.validUntil || ''}
+                      min={draft.metadata.issueDate}
+                      onChange={(e) => handleMetadataChange('validUntil', e.target.value)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 text-slate-700 transition-all"
+                    />
+                    {draft.metadata.validUntil && draft.metadata.validUntil < draft.metadata.issueDate && (
+                      <p className="text-[11px] text-red-600 font-bold mt-1">
+                        Expiry date is before issue date
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <label htmlFor="invoice-number-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Invoice Number</label>
+                    <input
+                      type="text"
+                      id="invoice-number-input"
+                      value={draft.metadata.invoiceNumber}
+                      onChange={(e) => handleMetadataChange('invoiceNumber', e.target.value)}
+                      placeholder="INV-1001"
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-800 font-mono transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="invoice-issue-date-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Issue Date</label>
+                    <input
+                      type="date"
+                      id="invoice-issue-date-input"
+                      value={draft.metadata.issueDate}
+                      onChange={(e) => handleMetadataChange('issueDate', e.target.value)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="invoice-due-date-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Due Date <span className="text-slate-400 text-[10px] font-normal">(Optional)</span></label>
+                    <input
+                      type="date"
+                      id="invoice-due-date-input"
+                      value={draft.metadata.dueDate || ''}
+                      min={draft.metadata.issueDate}
+                      onChange={(e) => handleMetadataChange('dueDate', e.target.value)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 transition-all"
+                    />
+                    {draft.metadata.dueDate && draft.metadata.dueDate < draft.metadata.issueDate && (
+                      <p className="text-[11px] text-red-600 font-bold mt-1">
+                        Due date is before issue date
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
           
@@ -1511,6 +1735,49 @@ export default function InvoiceEditorView({
               <div className="text-[11px] bg-green-50 border border-green-100 text-green-700 px-3 py-1.5 rounded flex items-center gap-1.5 animate-fadeIn">
                 <Check className="w-3.5 h-3.5 shrink-0" />
                 <span>{successMsg}</span>
+              </div>
+            )}
+
+            {/* Saved Clients 1-Tap Select Chips */}
+            {clients.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                  1-Tap Select Saved Client
+                </span>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {clients.map(c => {
+                    const isSelected = draft.customer.name === c.name;
+                    return (
+                      <div key={c.id} className="relative group shrink-0 flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => selectClient(c)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 border flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 border-slate-200/80 hover:bg-slate-200/80'
+                          }`}
+                        >
+                          <span>👤 {c.name}</span>
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClient(c.id, c.name);
+                            }}
+                            className={`inline-flex items-center justify-center w-4 h-4 rounded-full transition-colors ${
+                              isSelected
+                                ? 'bg-indigo-700 hover:bg-indigo-800 text-indigo-100'
+                                : 'bg-slate-200/80 hover:bg-rose-100 hover:text-rose-600 text-slate-500'
+                            }`}
+                            title={`Remove ${c.name} from saved clients`}
+                          >
+                            ×
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -1812,17 +2079,73 @@ export default function InvoiceEditorView({
                     return (
                       <tr key={item.id} className="group hover:bg-slate-50/50 transition-colors">
                         {/* Description field */}
-                        <td className="py-2 pr-3">
+                        <td className="py-2 pr-3 relative">
                           <input
                             type="text"
                             value={item.description}
                             data-row-index={index}
                             data-cell-type="description"
-                            onChange={(e) => handleItemChange(index, 'description', e.target.value)}
+                            onFocus={() => setActiveItemFocusIndex(index)}
+                            onBlur={() => {
+                              // Delay closing so onMouseDown works on dropdown
+                              setTimeout(() => setActiveItemFocusIndex(null), 200);
+                            }}
+                            onChange={(e) => {
+                              handleItemChange(index, 'description', e.target.value);
+                              setActiveItemFocusIndex(index);
+                            }}
                             onKeyDown={(e) => handleKeyDown(e, index, 'description')}
                             placeholder="Service/Product description..."
                             className="w-full bg-transparent py-1 px-1.5 border border-transparent rounded hover:border-slate-200 focus:border-blue-500 focus:bg-white focus:outline-none text-sm text-slate-800 transition-all"
                           />
+
+                          {/* Autofill Suggestions Dropdown */}
+                          {activeItemFocusIndex === index && item.description.trim().length > 0 && savedItems && (
+                            (() => {
+                              const matches = savedItems.filter(si =>
+                                si.name.toLowerCase().includes(item.description.toLowerCase().trim())
+                              );
+                              if (matches.length === 0) return null;
+                              return (
+                                <div className="absolute left-0 top-full mt-1 w-full sm:w-72 z-30 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden animate-fadeIn">
+                                  <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/80 text-[10px] font-extrabold text-slate-400 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                                    <span>⚡ Saved Item Suggestions</span>
+                                    <span className="text-emerald-600 font-bold">{matches.length} found</span>
+                                  </div>
+                                  <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                                    {matches.map(si => (
+                                      <button
+                                        key={si.id}
+                                        type="button"
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          handleItemChange(index, 'description', si.name);
+                                          handleItemChange(index, 'unitPrice', String(si.defaultPrice));
+                                          if (!item.quantity) {
+                                            handleItemChange(index, 'quantity', '1');
+                                          }
+                                          setActiveItemFocusIndex(null);
+                                        }}
+                                        className="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-slate-800/70 flex items-center justify-between text-xs transition-colors cursor-pointer group"
+                                      >
+                                        <div className="min-w-0 pr-2">
+                                          <span className="font-bold text-slate-900 dark:text-slate-100 block truncate group-hover:text-[#0F3D2E] dark:group-hover:text-emerald-400">
+                                            {si.name}
+                                          </span>
+                                          {si.defaultTaxRate ? (
+                                            <span className="text-[10px] text-slate-400 font-medium">Tax: {si.defaultTaxRate}%</span>
+                                          ) : null}
+                                        </div>
+                                        <span className="font-mono font-extrabold text-emerald-700 dark:text-emerald-400 shrink-0">
+                                          {formatMoney(si.defaultPrice, profile.currency)}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()
+                          )}
                         </td>
                         
                         {/* Quantity field */}
@@ -1905,39 +2228,7 @@ export default function InvoiceEditorView({
             </div>
           </div>
 
-          {/* Box 3: Notes / Payment Terms */}
-          <div className="bg-white rounded border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4">
-            <div className="flex items-center gap-2 text-slate-800 font-semibold pb-2 border-b border-slate-100">
-              <FileText className="w-4 h-4 text-slate-400" />
-              <h3 className="text-xs uppercase tracking-wider text-slate-500">Invoice Footer Notes & Terms</h3>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1 sm:col-span-2">
-                <label htmlFor="invoice-notes-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Payment Instructions / Notes</label>
-                <textarea
-                  id="invoice-notes-input"
-                  rows={3}
-                  value={draft.metadata.notes}
-                  onChange={(e) => handleMetadataChange('notes', e.target.value)}
-                  placeholder="e.g. Please wire transfer to account:&#10;Bank Name: Commonwealth Bank&#10;BSB: 063-000, Account: 1234 5678"
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 placeholder-slate-400 transition-all resize-none"
-                />
-              </div>
-
-              <div className="space-y-1 sm:col-span-2">
-                <label htmlFor="invoice-payment-terms-input" className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Payment Terms Note <span className="text-slate-400 text-[10px] font-normal">(Optional)</span></label>
-                <input
-                  type="text"
-                  id="invoice-payment-terms-input"
-                  value={draft.metadata.paymentTerms}
-                  onChange={(e) => handleMetadataChange('paymentTerms', e.target.value)}
-                  placeholder="e.g. Payment due within 14 days"
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-slate-700 placeholder-slate-400 transition-all"
-                />
-              </div>
-            </div>
-          </div>
 
         </div>
 
@@ -2074,21 +2365,37 @@ export default function InvoiceEditorView({
               </span>
             </div>
 
-            {/* Proceed to Payment Button */}
+            {/* Proceed / Preview Button */}
             <div className="pt-4 space-y-2">
-              <button
-                type="button"
-                onClick={handleProceedToPaymentClick}
-                disabled={isInvoiceEmpty}
-                className={`w-full font-bold py-3 px-4 rounded text-xs transition-all shadow-md flex items-center justify-center gap-2 min-h-[44px] ${
-                  isInvoiceEmpty
-                    ? 'bg-slate-200 text-slate-400 border border-slate-200 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white cursor-pointer'
-                }`}
-              >
-                <span>Proceed to Payment</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {draft.documentType === 'quotation' ? (
+                <button
+                  type="button"
+                  onClick={handlePreviewClick}
+                  disabled={isInvoiceEmpty}
+                  className={`w-full font-bold py-3 px-4 rounded text-xs transition-all shadow-md flex items-center justify-center gap-2 min-h-[44px] ${
+                    isInvoiceEmpty
+                      ? 'bg-slate-200 text-slate-400 border border-slate-200 cursor-not-allowed'
+                      : 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white cursor-pointer'
+                  }`}
+                >
+                  <span>Preview &amp; Issue Quotation</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleProceedToPaymentClick}
+                  disabled={isInvoiceEmpty}
+                  className={`w-full font-bold py-3 px-4 rounded text-xs transition-all shadow-md flex items-center justify-center gap-2 min-h-[44px] ${
+                    isInvoiceEmpty
+                      ? 'bg-slate-200 text-slate-400 border border-slate-200 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white cursor-pointer'
+                  }`}
+                >
+                  <span>Proceed to Payment</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
               {isInvoiceEmpty && (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400 text-center font-bold bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-lg p-2 leading-tight">
                   Add at least one line item first.
@@ -2339,12 +2646,16 @@ export default function InvoiceEditorView({
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: 'Cash', icon: Coins, color: 'text-emerald-500' },
+                    { id: 'Card', icon: CreditCard, color: 'text-indigo-500' },
+                    { id: 'Tap-to-Pay', icon: Nfc, color: 'text-amber-500' },
                     { id: 'Bank Transfer', icon: Building2, color: 'text-blue-500' },
                     { id: 'EFT', icon: CreditCard, color: 'text-purple-500' },
                     { id: 'MFS (bKash)', icon: Smartphone, color: 'text-pink-500' },
                     { id: 'MFS (Nagad)', icon: Smartphone, color: 'text-orange-500' },
                     { id: 'MFS (Rocket)', icon: Smartphone, color: 'text-violet-500' }
-                  ].map((m) => {
+                  ]
+                  .filter(m => isMethodChecked(m.id))
+                  .map((m) => {
                     const IconComp = m.icon;
                     const isSel = modalSelectedMethod === m.id;
                     return (

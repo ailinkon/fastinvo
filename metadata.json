@@ -1,0 +1,6 @@
+{
+  "name": "FastInvo",
+  "description": "A minimal, lightning-fast client-side invoice generator designed for freelancers and small businesses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

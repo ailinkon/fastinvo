@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Workspace": {
+      "title": "Workspace",
+      "description": "A business organization workspace containing invoices, staff members, and settings.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "ownerEmail": { "type": "string", "format": "email", "maxLength": 120 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "ownerEmail"]
+    },
+    "StaffMember": {
+      "title": "Staff Member",
+      "description": "An invited team member or admin under a workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["ADMIN", "STAFF"] },
+        "googleEmail": { "type": "string", "format": "email", "maxLength": 120 },
+        "googleUid": { "type": "string", "maxLength": 128 },
+        "pinHash": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["ACTIVE", "DISABLED"] },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["name", "role", "googleEmail", "status"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "An invoice or quote document stored under a workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "workspaceId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": "Workspace",
+      "description": "Root workspace document containing business configuration."
+    },
+    "/workspaces/{workspaceId}/staff/{staffId}": {
+      "schema": "StaffMember",
+      "description": "Invited staff members with Google Auth link and PIN quick-unlock hashes."
+    },
+    "/workspaces/{workspaceId}/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Invoices created by workspace owners, admins, or staff."
+    }
+  }
+}

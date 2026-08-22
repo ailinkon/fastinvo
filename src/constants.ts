@@ -4,6 +4,7 @@
  */
 
 import { Currency, BusinessProfile, TaxConfig, InvoiceDraft } from './types';
+import { FASTINVO_OFFICIAL_LOGO } from './assets/logo';
 
 export const POPULAR_CURRENCIES: Currency[] = [
   { code: 'USD', symbol: '$', label: '$ USD (US Dollar)', locale: 'en-US', symbolPlacement: 'before', decimalPlaces: 2 },
@@ -18,7 +19,7 @@ export const POPULAR_CURRENCIES: Currency[] = [
 ];
 
 export const DEFAULT_PROFILE: BusinessProfile = {
-  logo: '',
+  logo: FASTINVO_OFFICIAL_LOGO,
   companyName: '',
   address: '',
   phone: '',
@@ -29,13 +30,22 @@ export const DEFAULT_PROFILE: BusinessProfile = {
   currency: { code: 'USD', symbol: '$', label: '$ USD (US Dollar)', locale: 'en-US', symbolPlacement: 'before', decimalPlaces: 2 },
   invoicePrefix: 'INV-',
   nextInvoiceNumber: 1001,
+  quotationPrefix: 'QUO-',
+  nextQuotationNumber: 1001,
   template: 'minimalist',
-  paymentMethods: ['Cash'],
+  paymentMethods: ['Cash', 'Card', 'Tap-to-Pay', 'Bank transfer'],
   paymentProcedure: '',
   paymentGatewayInfo: '',
   mfsProvider: '',
   mfsAccountNo: '',
   mfsAccountType: 'Personal',
+  thankYouMessage: 'Thank you for your business.',
+  paymentQrType: 'bKash',
+  paymentQrAccount: '',
+  paymentQrAccountName: '',
+  paymentQrBankName: '',
+  paymentQrRouting: '',
+  paymentQrInstructions: '',
 };
 
 export const DEFAULT_TAX_CONFIG: TaxConfig = {
@@ -53,11 +63,23 @@ export const getTodayDateString = (): string => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-export const DEFAULT_INVOICE_DRAFT = (nextNum: string): InvoiceDraft => ({
+export const getFutureDateString = (daysToAdd: number = 14): string => {
+  const date = new Date();
+  date.setDate(date.getDate() + daysToAdd);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+export const DEFAULT_INVOICE_DRAFT = (nextNum: string, docType: 'invoice' | 'quotation' = 'invoice'): InvoiceDraft => ({
+  documentType: docType,
   metadata: {
-    invoiceNumber: nextNum,
+    invoiceNumber: docType === 'invoice' ? nextNum : '',
+    quotationNumber: docType === 'quotation' ? nextNum : '',
     issueDate: getTodayDateString(),
-    dueDate: '',
+    dueDate: docType === 'invoice' ? getFutureDateString(14) : '',
+    validUntil: docType === 'quotation' ? getFutureDateString(14) : '',
     paymentTerms: '',
     notes: '',
   },
@@ -73,6 +95,7 @@ export const DEFAULT_INVOICE_DRAFT = (nextNum: string): InvoiceDraft => ({
   discountType: 'percentage',
   discountValue: 0,
   status: 'Due',
+  quotationStatus: 'Draft',
   paymentMethod: '',
   paidAmount: 0,
   mfsTrxId: '',
@@ -85,10 +108,21 @@ export const DEFAULT_INVOICE_DRAFT = (nextNum: string): InvoiceDraft => ({
 /**
  * Currency formatter helper
  */
-export function formatMoney(amount: number, currency: Currency | string): string {
+export function formatMoney(amount: number | null | undefined, currency?: Currency | string | null): string {
+  const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : 0;
+  
+  if (!currency) {
+    const roundedAmount = Math.round((safeAmount + Number.EPSILON) * 100) / 100;
+    const formatted = roundedAmount.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `$${formatted}`;
+  }
+
   if (typeof currency === 'string') {
     // backward compatibility or raw symbol fallback
-    const roundedAmount = Math.round((amount + Number.EPSILON) * 100) / 100;
+    const roundedAmount = Math.round((safeAmount + Number.EPSILON) * 100) / 100;
     const formatted = roundedAmount.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -98,7 +132,7 @@ export function formatMoney(amount: number, currency: Currency | string): string
 
   const decimals = currency.decimalPlaces !== undefined ? currency.decimalPlaces : 2;
   const factor = Math.pow(10, decimals);
-  const roundedAmount = Math.round((amount + Number.EPSILON) * factor) / factor;
+  const roundedAmount = Math.round((safeAmount + Number.EPSILON) * factor) / factor;
 
   const locale = currency.locale || 'en-US';
   const formatted = roundedAmount.toLocaleString(locale, {
@@ -106,7 +140,7 @@ export function formatMoney(amount: number, currency: Currency | string): string
     maximumFractionDigits: decimals,
   });
 
-  const symbol = currency.symbol || '';
+  const symbol = currency.symbol || '$';
   const placement = currency.symbolPlacement || 'before';
 
   switch (placement) {

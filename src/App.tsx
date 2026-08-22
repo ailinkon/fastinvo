@@ -9,22 +9,67 @@ import {
   FileText, 
   Eye, 
   Settings as SettingsIcon, 
-  Sparkles,
   Receipt,
   Sun,
   Moon,
-  History
+  History,
+  LayoutDashboard,
+  Users,
+  BarChart3,
+  Bookmark,
+  ShieldCheck,
+  UserCheck,
+  User,
+  Monitor,
+  KeyRound,
+  LogOut
 } from 'lucide-react';
-import { BusinessProfile, TaxConfig, InvoiceDraft, Client, SavedInvoice } from './types';
+import { 
+  BusinessProfile, 
+  TaxConfig, 
+  InvoiceDraft, 
+  Client, 
+  SavedInvoice, 
+  SavedItem, 
+  AuthUser, 
+  TwoFactorConfig,
+  TeamMember,
+  WorkspaceConfig
+} from './types';
+import { calculateInvoiceTotals, filterRealItems } from './utils/calculations';
 import { 
   DEFAULT_PROFILE, 
   DEFAULT_TAX_CONFIG, 
   DEFAULT_INVOICE_DRAFT 
 } from './constants';
-import SettingsView from './components/SettingsView';
+import { FASTINVO_ICON_MARK } from './assets/logo';
+import {
+  initAndMigrateIndexedDB,
+  saveInvoicesToDB,
+  saveClientsToDB,
+  saveSavedItemsToDB,
+  saveSettingToDB,
+  FastInvoDatabaseBackup
+} from './lib/db';
+import SettingsView, { SettingsTabId } from './components/SettingsView';
+import ProfileView from './components/ProfileView';
+import LoginPage from './components/LoginPage';
 import InvoiceEditorView from './components/InvoiceEditorView';
 import InvoicePreviewView from './components/InvoicePreviewView';
 import HistoryView from './components/HistoryView';
+import DashboardView from './components/DashboardView';
+import ClientsView from './components/ClientsView';
+import ReportsView from './components/ReportsView';
+import SavedItemsView from './components/SavedItemsView';
+import AuthModal from './components/AuthModal';
+import TwoFactorModal from './components/TwoFactorModal';
+import PaymentCompleteModal from './components/PaymentCompleteModal';
+import StaffPinLoginModal from './components/StaffPinLoginModal';
+import ReceiptView from './components/ReceiptView';
+import BottomNavigation, { NavTab } from './components/BottomNavigation';
+import HeaderNavigation from './components/HeaderNavigation';
+
+export type ThemeMode = 'light' | 'dark' | 'system';
 
 const tabTransitionVariants = {
   enter: (direction: number) => ({
@@ -43,101 +88,352 @@ const tabTransitionVariants = {
 
 export default function App() {
   // 1. Tab State Management
-  const tabOrder = ['editor', 'preview', 'history', 'settings'] as const;
-  const [activeTab, setActiveTab] = useState<'editor' | 'preview' | 'history' | 'settings'>('editor');
+  const tabOrder: NavTab[] = ['dashboard', 'editor', 'preview', 'history', 'reports', 'clients', 'saved_items' as NavTab, 'settings', 'receipt'];
+  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [direction, setDirection] = useState<number>(0);
 
-  const changeTab = (tab: 'editor' | 'preview' | 'history' | 'settings') => {
+  // Init IndexedDB migration on mount
+  useEffect(() => {
+    initAndMigrateIndexedDB();
+  }, []);
+
+  // Saved Items State
+  const [savedItems, setSavedItems] = useState<SavedItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('fastinvo_saved_items');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse fastinvo_saved_items:', e);
+    }
+    return [
+      { id: '1', name: 'Web Development / Design', defaultPrice: 1200, defaultTaxRate: 10 },
+      { id: '2', name: 'UI/UX Mobile Design Sprints', defaultPrice: 850, defaultTaxRate: 10 },
+      { id: '3', name: 'Monthly Maintenance & Support', defaultPrice: 350, defaultTaxRate: 0 }
+    ];
+  });
+
+  useEffect(() => {
+    saveSavedItemsToDB(savedItems);
+  }, [savedItems]);
+
+  // Auth & 2FA Modal States
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
+    try {
+      const saved = localStorage.getItem('fastinvo_auth_user');
+      if (saved && saved !== 'undefined' && saved !== 'null') {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed to parse fastinvo_auth_user:', e);
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    saveSettingToDB('fastinvo_auth_user', currentUser);
+  }, [currentUser]);
+
+  // Team & Workspace Multi-user State
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => {
+    try {
+      const saved = localStorage.getItem('fastinvo_team_members');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse fastinvo_team_members:', e);
+    }
+    return [
+      {
+        id: 'staff-1',
+        name: 'Store Cashier',
+        role: 'staff',
+        pin: '1234',
+        status: 'active',
+        addedAt: new Date().toISOString(),
+        avatarBg: 'bg-emerald-600'
+      }
+    ];
+  });
+
+  useEffect(() => {
+    saveSettingToDB('fastinvo_team_members', teamMembers);
+  }, [teamMembers]);
+
+  const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig>(() => {
+    try {
+      const saved = localStorage.getItem('fastinvo_workspace_config');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse fastinvo_workspace_config:', e);
+    }
+    return {
+      id: 'ws-default',
+      name: 'FastInvo Store & Invoicing',
+      ownerEmail: 'linkonashrafulislam@gmail.com',
+      teamMembers: [],
+      isMultiUserEnabled: true
+    };
+  });
+
+  useEffect(() => {
+    saveSettingToDB('fastinvo_workspace_config', workspaceConfig);
+  }, [workspaceConfig]);
+
+  const [isStaffPinModalOpen, setIsStaffPinModalOpen] = useState(false);
+  const [selectedStaffForPin, setSelectedStaffForPin] = useState<TeamMember | null>(null);
+
+  const handleSwitchToStaff = (member?: TeamMember) => {
+    setSelectedStaffForPin(member || null);
+    setIsStaffPinModalOpen(true);
+  };
+
+  const handleStaffPinSuccess = (member: TeamMember) => {
+    const staffUser: AuthUser = {
+      id: member.id,
+      email: `${member.name.toLowerCase().replace(/\s+/g, '')}@workspace.fastinvo.local`,
+      displayName: member.name,
+      photoURL: null,
+      role: 'staff',
+      loginMethod: 'pin',
+      staffMemberId: member.id
+    };
+    setCurrentUser(staffUser);
+    setIsStaffPinModalOpen(false);
+    setSelectedStaffForPin(null);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+  };
+
+  const [twoFactorConfig, setTwoFactorConfig] = useState<TwoFactorConfig>(() => {
+    try {
+      const saved = localStorage.getItem('fastinvo_2fa_config');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse fastinvo_2fa_config:', e);
+    }
+    return { isEnabled: false, secret: 'JBSWY3DPEHPK3PXP', recoveryCodes: [] };
+  });
+
+  useEffect(() => {
+    saveSettingToDB('fastinvo_2fa_config', twoFactorConfig);
+  }, [twoFactorConfig]);
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isTwoFactorModalOpen, setIsTwoFactorModalOpen] = useState(false);
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentTxnId, setPaymentTxnId] = useState('');
+  const [paymentMethodName, setPaymentMethodName] = useState('Cash');
+
+  // Settings initial tab focus state
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsTabId>('payments');
+
+  // Navigation History Stack
+  const [tabHistory, setTabHistory] = useState<NavTab[]>(['dashboard']);
+
+  const handleGoToSettings = (section: any = 'payments') => {
+    setSettingsInitialSection(section || 'payments');
+    changeTab('settings');
+  };
+
+  const changeTab = (tab: NavTab) => {
+    if (tab === activeTab) return;
     const prevIndex = tabOrder.indexOf(activeTab);
     const nextIndex = tabOrder.indexOf(tab);
     setDirection(nextIndex > prevIndex ? 1 : -1);
+
+    // If leaving editor tab, silently filter out untouched placeholder rows from draft
+    if (activeTab === 'editor' && tab !== 'editor') {
+      const cleanedItems = filterRealItems(draft.items);
+      if (cleanedItems.length !== draft.items.length) {
+        setDraft(prev => ({
+          ...prev,
+          items: cleanedItems
+        }));
+      }
+    }
+
+    setTabHistory(prev => [...prev, tab]);
     setActiveTab(tab);
   };
 
-  // Theme State Management (Loads from localStorage or defaults)
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    const saved = localStorage.getItem('fastinvo_theme');
-    if (saved) {
-      return saved === 'dark';
+  const handleBack = () => {
+    if (tabHistory.length > 1) {
+      const nextHistory = [...tabHistory];
+      nextHistory.pop(); // remove current active tab
+      const prevTab = nextHistory[nextHistory.length - 1];
+      setTabHistory(nextHistory);
+      const prevIndex = tabOrder.indexOf(activeTab);
+      const nextIndex = tabOrder.indexOf(prevTab);
+      setDirection(nextIndex > prevIndex ? 1 : -1);
+      setActiveTab(prevTab);
+    } else {
+      changeTab('dashboard');
     }
+  };
+
+  // Theme State Management ('light' | 'dark' | 'system')
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('fastinvo_theme_mode') as ThemeMode;
+    if (saved === 'light' || saved === 'dark' || saved === 'system') {
+      return saved;
+    }
+    return 'system';
+  });
+
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (themeMode === 'dark') return true;
+    if (themeMode === 'light') return false;
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
   useEffect(() => {
-    if (isDark) {
+    const computeIsDark = () => {
+      if (themeMode === 'dark') return true;
+      if (themeMode === 'light') return false;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    };
+
+    const dark = computeIsDark();
+    setIsDark(dark);
+
+    if (dark) {
       document.documentElement.classList.add('dark');
-      localStorage.setItem('fastinvo_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
-      localStorage.setItem('fastinvo_theme', 'light');
     }
 
-    // Dynamic theme-color meta tag
+    localStorage.setItem('fastinvo_theme_mode', themeMode);
+
     let metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (!metaThemeColor) {
       metaThemeColor = document.createElement('meta');
       metaThemeColor.setAttribute('name', 'theme-color');
       document.head.appendChild(metaThemeColor);
     }
-    metaThemeColor.setAttribute('content', isDark ? '#020617' : '#f8fafc');
-  }, [isDark]);
+    metaThemeColor.setAttribute('content', dark ? '#020617' : '#f8fafc');
+
+    if (themeMode === 'system') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = (e: MediaQueryListEvent) => {
+        const matches = e.matches;
+        setIsDark(matches);
+        if (matches) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      };
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    }
+  }, [themeMode]);
 
   const toggleTheme = () => {
-    setIsDark(prev => !prev);
+    if (themeMode === 'light') setThemeMode('dark');
+    else if (themeMode === 'dark') setThemeMode('system');
+    else setThemeMode('light');
   };
 
   // 2. Profile State Management (Loads from localStorage or defaults)
   const [profile, setProfile] = useState<BusinessProfile>(() => {
-    const saved = localStorage.getItem('fastinvo_profile');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved profile, resetting to default', e);
+    try {
+      const saved = localStorage.getItem('fastinvo_profile');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          let paymentMethods = parsed.paymentMethods;
+          if (!paymentMethods || (Array.isArray(paymentMethods) && paymentMethods.length === 1 && paymentMethods[0] === 'Cash')) {
+            paymentMethods = ['Cash', 'Card', 'Tap-to-Pay', 'Bank transfer'];
+          }
+          return {
+            ...DEFAULT_PROFILE,
+            ...parsed,
+            currency: parsed.currency || DEFAULT_PROFILE.currency,
+            paymentMethods,
+          };
+        }
       }
+    } catch (e) {
+      console.error('Failed to parse saved profile, resetting to default', e);
     }
     return DEFAULT_PROFILE;
   });
 
   // 3. Tax Config State Management (Loads from localStorage or defaults)
   const [tax, setTax] = useState<TaxConfig>(() => {
-    const saved = localStorage.getItem('fastinvo_tax');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved tax config, resetting to default', e);
+    try {
+      const saved = localStorage.getItem('fastinvo_tax');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...DEFAULT_TAX_CONFIG,
+            ...parsed,
+          };
+        }
       }
+    } catch (e) {
+      console.error('Failed to parse saved tax config, resetting to default', e);
     }
     return DEFAULT_TAX_CONFIG;
   });
 
   // 4. Draft State Management (Loads from localStorage or creates empty)
   const [draft, setDraft] = useState<InvoiceDraft>(() => {
-    const saved = localStorage.getItem('fastinvo_draft');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved draft invoice, resetting to default', e);
+    try {
+      const saved = localStorage.getItem('fastinvo_draft');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && parsed.metadata) {
+          return parsed;
+        }
       }
+    } catch (e) {
+      console.error('Failed to parse saved draft invoice, resetting to default', e);
     }
-    // Fallback to fresh draft matching current business details
-    const initialProfile = localStorage.getItem('fastinvo_profile')
-      ? JSON.parse(localStorage.getItem('fastinvo_profile')!)
-      : DEFAULT_PROFILE;
-    return DEFAULT_INVOICE_DRAFT(`${initialProfile.invoicePrefix}${initialProfile.nextInvoiceNumber}`);
+    
+    // Safe fallback to fresh draft
+    let prefix = DEFAULT_PROFILE.invoicePrefix || 'INV-';
+    let nextNum = DEFAULT_PROFILE.nextInvoiceNumber || '001';
+    try {
+      const profileRaw = localStorage.getItem('fastinvo_profile');
+      if (profileRaw && profileRaw !== 'undefined') {
+        const parsedP = JSON.parse(profileRaw);
+        if (parsedP?.invoicePrefix) prefix = parsedP.invoicePrefix;
+        if (parsedP?.nextInvoiceNumber) nextNum = parsedP.nextInvoiceNumber;
+      }
+    } catch {}
+
+    return DEFAULT_INVOICE_DRAFT(`${prefix}${nextNum}`);
   });
 
   // 5. Client State Management (Loads from localStorage or defaults)
   const [clients, setClients] = useState<Client[]>(() => {
-    const saved = localStorage.getItem('fastinvo_clients');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved clients, resetting to default', e);
+    try {
+      const saved = localStorage.getItem('fastinvo_clients');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       }
+    } catch (e) {
+      console.error('Failed to parse saved clients, resetting to default', e);
     }
     return [
       {
@@ -161,51 +457,131 @@ export default function App() {
   const [past, setPast] = useState<InvoiceDraft[]>([]);
   const [future, setFuture] = useState<InvoiceDraft[]>([]);
 
-  // 7. Sync to Local Storage on State Change
+  // 7. Sync to Local Storage and IndexedDB on State Change
   useEffect(() => {
-    localStorage.setItem('fastinvo_profile', JSON.stringify(profile));
+    saveSettingToDB('fastinvo_profile', profile);
   }, [profile]);
 
   useEffect(() => {
-    localStorage.setItem('fastinvo_tax', JSON.stringify(tax));
+    saveSettingToDB('fastinvo_tax', tax);
   }, [tax]);
 
   useEffect(() => {
-    localStorage.setItem('fastinvo_draft', JSON.stringify(draft));
+    const cleanedDraft = {
+      ...draft,
+      items: filterRealItems(draft.items)
+    };
+    saveSettingToDB('fastinvo_draft', cleanedDraft);
   }, [draft]);
 
   useEffect(() => {
-    localStorage.setItem('fastinvo_clients', JSON.stringify(clients));
+    saveClientsToDB(clients);
   }, [clients]);
 
-  // Saved Invoices History (Loads from localStorage)
+  // Saved Invoices History (Loads from IndexedDB / localStorage)
   const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>(() => {
-    const saved = localStorage.getItem('fastinvo_history');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved invoices history', e);
+    try {
+      const saved = localStorage.getItem('fastinvo_history');
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
       }
+    } catch (e) {
+      console.error('Failed to parse saved invoices history', e);
     }
     return [];
   });
 
+  const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(null);
+
   useEffect(() => {
-    localStorage.setItem('fastinvo_history', JSON.stringify(savedInvoices));
+    saveInvoicesToDB(savedInvoices);
   }, [savedInvoices]);
 
+  // Auto-save active draft into history
+  useEffect(() => {
+    const invNum = (draft.metadata.invoiceNumber || '').trim();
+    const custName = (draft.customer.name || '').trim();
+    const realItems = filterRealItems(draft.items);
+
+    if (invNum && (custName || realItems.length > 0)) {
+      const cleanedDraft = {
+        ...draft,
+        items: realItems
+      };
+
+      setSavedInvoices(prev => {
+        let existingIndex = -1;
+        if (activeInvoiceId) {
+          existingIndex = prev.findIndex(item => item.id === activeInvoiceId);
+        }
+        if (existingIndex < 0 && invNum) {
+          existingIndex = prev.findIndex(item => item.draft.metadata.invoiceNumber === invNum);
+        }
+
+        if (existingIndex >= 0) {
+          const existing = prev[existingIndex];
+          if (
+            JSON.stringify(existing.draft) === JSON.stringify(cleanedDraft) &&
+            JSON.stringify(existing.profile) === JSON.stringify(profile) &&
+            JSON.stringify(existing.tax) === JSON.stringify(tax)
+          ) {
+            return prev;
+          }
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...existing,
+            draft: cleanedDraft,
+            profile,
+            tax,
+          };
+          return updated;
+        } else {
+          const targetId = activeInvoiceId || `inv-${Date.now()}`;
+          if (!activeInvoiceId) {
+            setActiveInvoiceId(targetId);
+          }
+          const newInvoice: SavedInvoice = {
+            id: targetId,
+            draft: cleanedDraft,
+            profile,
+            tax,
+            createdAt: new Date().toISOString()
+          };
+          return [newInvoice, ...prev];
+        }
+      });
+    }
+  }, [draft, profile, tax, activeInvoiceId]);
+
   const handleSaveInvoice = (invoiceDraft: InvoiceDraft, customProfile?: BusinessProfile, customTax?: TaxConfig) => {
-    const invoiceNum = invoiceDraft.metadata.invoiceNumber || 'DRAFT';
+    const cleanedDraft = {
+      ...invoiceDraft,
+      items: filterRealItems(invoiceDraft.items)
+    };
+    const invoiceNum = cleanedDraft.metadata.invoiceNumber || 'DRAFT';
     const profileToUse = customProfile || profile;
     const taxToUse = customTax || tax;
 
     setSavedInvoices(prev => {
-      // Check if invoice number already exists
-      const existingIndex = prev.findIndex(item => item.draft.metadata.invoiceNumber === invoiceNum);
+      let existingIndex = -1;
+      if (activeInvoiceId) {
+        existingIndex = prev.findIndex(item => item.id === activeInvoiceId);
+      }
+      if (existingIndex < 0 && invoiceNum) {
+        existingIndex = prev.findIndex(item => item.draft.metadata.invoiceNumber === invoiceNum);
+      }
+
+      const targetId = existingIndex >= 0 ? prev[existingIndex].id : (activeInvoiceId || `inv-${Date.now()}`);
+      if (!activeInvoiceId) {
+        setActiveInvoiceId(targetId);
+      }
+
       const newInvoice: SavedInvoice = {
-        id: existingIndex >= 0 ? prev[existingIndex].id : `inv-${Date.now()}`,
-        draft: invoiceDraft,
+        id: targetId,
+        draft: cleanedDraft,
         profile: profileToUse,
         tax: taxToUse,
         createdAt: existingIndex >= 0 ? prev[existingIndex].createdAt : new Date().toISOString()
@@ -222,6 +598,9 @@ export default function App() {
   };
 
   const handleDeleteInvoice = (id: string) => {
+    if (activeInvoiceId === id) {
+      setActiveInvoiceId(null);
+    }
     setSavedInvoices(prev => prev.filter(item => item.id !== id));
   };
 
@@ -229,6 +608,7 @@ export default function App() {
     setDraft(invoice.draft);
     setProfile(invoice.profile);
     setTax(invoice.tax);
+    setActiveInvoiceId(invoice.id);
     setPast([]);
     setFuture([]);
     changeTab('editor');
@@ -307,13 +687,14 @@ export default function App() {
     // Reset draft fields using new counter
     const nextDraftNum = `${profile.invoicePrefix}${nextNum}`;
     setDraft(DEFAULT_INVOICE_DRAFT(nextDraftNum));
+    setActiveInvoiceId(null);
     setPast([]);
     setFuture([]);
     
     changeTab('editor');
   };
 
-  const handleTabChange = (tab: 'editor' | 'preview' | 'history' | 'settings') => {
+  const handleTabChange = (tab: NavTab) => {
     if (tab === 'preview') {
       const name = draft.customer.name.trim();
       const phone = draft.customer.phone.trim();
@@ -344,109 +725,225 @@ export default function App() {
     changeTab(tab);
   };
 
+  const handleSelectInvoiceFromDashboard = (invoice: SavedInvoice) => {
+    setDraft(invoice.draft);
+    setProfile(invoice.profile);
+    setTax(invoice.tax);
+    setActiveInvoiceId(invoice.id);
+    changeTab('preview');
+  };
+
+  const handleEditInvoice = (invoice: SavedInvoice) => {
+    setDraft(invoice.draft);
+    setProfile(invoice.profile);
+    setTax(invoice.tax);
+    setActiveInvoiceId(invoice.id);
+    setPast([]);
+    setFuture([]);
+    changeTab('editor');
+  };
+
+  const handleDuplicateInvoice = (invoice: SavedInvoice) => {
+    const nextNum = profile.nextInvoiceNumber + 1;
+    setProfile({
+      ...profile,
+      nextInvoiceNumber: nextNum
+    });
+    const newInvoiceNumber = `${profile.invoicePrefix}${nextNum}`;
+    const duplicatedDraft: InvoiceDraft = {
+      ...invoice.draft,
+      metadata: {
+        ...invoice.draft.metadata,
+        invoiceNumber: newInvoiceNumber,
+        issueDate: new Date().toISOString().split('T')[0],
+      },
+      status: 'Due',
+      paidAmount: 0
+    };
+    setDraft(duplicatedDraft);
+    setActiveInvoiceId(null);
+    setPast([]);
+    setFuture([]);
+    changeTab('editor');
+  };
+
+  const handleCreateInvoiceForClient = (client: Client) => {
+    handleNewInvoice();
+    setDraft(prev => ({
+      ...prev,
+      customer: {
+        name: client.name,
+        address: client.address || '',
+        phone: client.phone || '',
+        email: client.email || '',
+      }
+    }));
+    changeTab('editor');
+  };
+
+  const handleRestoreDatabase = async (
+    backupData: FastInvoDatabaseBackup['data'],
+    mode: 'replace' | 'merge' = 'replace'
+  ) => {
+    try {
+      if (mode === 'replace') {
+        if (backupData.invoices) {
+          setSavedInvoices(backupData.invoices);
+          await saveInvoicesToDB(backupData.invoices);
+        }
+        if (backupData.clients) {
+          setClients(backupData.clients);
+          await saveClientsToDB(backupData.clients);
+        }
+        if (backupData.savedItems) {
+          setSavedItems(backupData.savedItems);
+          await saveSavedItemsToDB(backupData.savedItems);
+        }
+        if (backupData.profile && Object.keys(backupData.profile).length > 0) {
+          setProfile(backupData.profile);
+          await saveSettingToDB('fastinvo_profile', backupData.profile);
+        }
+        if (backupData.tax && Object.keys(backupData.tax).length > 0) {
+          setTax(backupData.tax);
+          await saveSettingToDB('fastinvo_tax', backupData.tax);
+        }
+        if (backupData.draft) {
+          setDraft(backupData.draft);
+          await saveSettingToDB('fastinvo_draft', backupData.draft);
+        }
+        if (backupData.themeMode) {
+          setThemeMode(backupData.themeMode);
+          await saveSettingToDB('fastinvo_theme_mode', backupData.themeMode);
+        }
+        if (backupData.twoFactorConfig) {
+          setTwoFactorConfig(backupData.twoFactorConfig);
+          await saveSettingToDB('fastinvo_2fa_config', backupData.twoFactorConfig);
+        }
+        if (backupData.teamMembers) {
+          setTeamMembers(backupData.teamMembers);
+          await saveSettingToDB('fastinvo_team_members', backupData.teamMembers);
+        }
+        if (backupData.workspaceConfig) {
+          setWorkspaceConfig(backupData.workspaceConfig);
+          await saveSettingToDB('fastinvo_workspace_config', backupData.workspaceConfig);
+        }
+      } else {
+        // Merge mode: append non-existing items
+        if (backupData.invoices && backupData.invoices.length > 0) {
+          const existingIds = new Set(savedInvoices.map(i => i.id));
+          const newItems = backupData.invoices.filter(i => !existingIds.has(i.id));
+          const merged = [...newItems, ...savedInvoices];
+          setSavedInvoices(merged);
+          await saveInvoicesToDB(merged);
+        }
+        if (backupData.clients && backupData.clients.length > 0) {
+          const existingIds = new Set(clients.map(c => c.id));
+          const newItems = backupData.clients.filter(c => !existingIds.has(c.id));
+          const merged = [...clients, ...newItems];
+          setClients(merged);
+          await saveClientsToDB(merged);
+        }
+        if (backupData.savedItems && backupData.savedItems.length > 0) {
+          const existingIds = new Set(savedItems.map(s => s.id));
+          const newItems = backupData.savedItems.filter(s => !existingIds.has(s.id));
+          const merged = [...savedItems, ...newItems];
+          setSavedItems(merged);
+          await saveSavedItemsToDB(merged);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to restore database in App.tsx:', err);
+      throw err;
+    }
+  };
+
+  const handleRecordPayment = (method: string = 'Cash') => {
+    const generatedTxn = `TXN-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+    const { grandTotal } = calculateInvoiceTotals(draft.items, draft.discountType, draft.discountValue, tax);
+
+    const updatedDraft: InvoiceDraft = {
+      ...draft,
+      status: 'Paid',
+      paidAmount: grandTotal,
+      paidDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      paymentMethod: method,
+    };
+
+    setDraft(updatedDraft);
+    handleSaveInvoice(updatedDraft, profile, tax);
+    setPaymentTxnId(generatedTxn);
+    setPaymentMethodName(method);
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleConvertQuoteToInvoice = (targetOrSaved: InvoiceDraft | SavedInvoice) => {
+    const quoteDraft = 'draft' in targetOrSaved ? targetOrSaved.draft : targetOrSaved;
+    
+    // 1. Generate new invoice number
+    const nextNum = profile.nextInvoiceNumber + 1;
+    setProfile(prev => ({ ...prev, nextInvoiceNumber: nextNum }));
+    const newInvoiceNumber = `${profile.invoicePrefix}${nextNum}`;
+
+    // 2. Create new linked invoice draft
+    const newInvoiceDraft: InvoiceDraft = {
+      ...quoteDraft,
+      documentType: 'invoice',
+      quotationStatus: undefined,
+      status: 'Due',
+      paidAmount: 0,
+      originatingQuotationNumber: quoteDraft.metadata.quotationNumber || quoteDraft.metadata.invoiceNumber,
+      metadata: {
+        ...quoteDraft.metadata,
+        invoiceNumber: newInvoiceNumber,
+        issueDate: new Date().toISOString().split('T')[0],
+        dueDate: quoteDraft.metadata.validUntil || 'On Receipt',
+      }
+    };
+
+    // 3. Mark the original quotation as Accepted and link converted invoice number
+    const updatedQuoteDraft: InvoiceDraft = {
+      ...quoteDraft,
+      quotationStatus: 'Accepted',
+      convertedInvoiceNumber: newInvoiceNumber,
+    };
+
+    // Update original quotation in saved history
+    setDraft(updatedQuoteDraft);
+    handleSaveInvoice(updatedQuoteDraft, profile, tax);
+
+    // 4. Save new invoice and switch to preview with new invoice
+    setTimeout(() => {
+      setDraft(newInvoiceDraft);
+      setActiveInvoiceId(null);
+      changeTab('preview');
+    }, 100);
+  };
+
+  const handleUpdateQuoteStatus = (status: 'Draft' | 'Sent' | 'Accepted' | 'Declined') => {
+    const updatedDraft: InvoiceDraft = {
+      ...draft,
+      quotationStatus: status,
+    };
+    setDraft(updatedDraft);
+    handleSaveInvoice(updatedDraft, profile, tax);
+  };
+
   return (
-    <div className="min-h-screen w-full max-w-[100vw] overflow-x-clip bg-[#f9fafb] dark:bg-slate-950 flex flex-col font-sans text-slate-900 dark:text-slate-100 transition-colors duration-150">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-clip bg-[#F7F8FA] dark:bg-slate-950 flex flex-col font-sans text-slate-900 dark:text-slate-100 transition-colors duration-150 pb-20">
       
-      {/* Sleek App Navigation Header (Omitted on print) */}
-      <header className="no-print bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm w-full max-w-full min-w-0" id="app-chrome-header">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16 gap-2">
-            
-            {/* Minimal logo / understated wordmark */}
-            <div className="flex items-center gap-2 sm:gap-6 md:gap-12 min-w-0 overflow-hidden">
-              <div className="flex items-center gap-1.5 shrink-0">
-                <div className="p-1 bg-slate-900 dark:bg-slate-800 text-white rounded flex items-center justify-center shrink-0">
-                  <Receipt className="w-4 h-4" />
-                </div>
-                <span className="text-sm sm:text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight font-sans shrink-0">
-                  FastInvo
-                </span>
-              </div>
-
-              {/* View Switcher / Tab Bar */}
-              <nav className="flex space-x-1 overflow-x-auto scrollbar-none min-w-0 py-1" id="app-view-tabs" aria-label="Tabs">
-                <button
-                  onClick={() => handleTabChange('editor')}
-                  id="tab-btn-editor"
-                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
-                    activeTab === 'editor'
-                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Editor</span>
-                </button>
-
-                 <button
-                  onClick={() => handleTabChange('preview')}
-                  id="tab-btn-preview"
-                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
-                    activeTab === 'preview'
-                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>Preview</span>
-                </button>
-
-                <button
-                  onClick={() => handleTabChange('history')}
-                  id="tab-btn-history"
-                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
-                    activeTab === 'history'
-                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <History className="w-3.5 h-3.5" />
-                  <span>History</span>
-                </button>
-
-                <button
-                  onClick={() => handleTabChange('settings')}
-                  id="tab-btn-settings"
-                  className={`inline-flex items-center gap-1 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all cursor-pointer border-b-2 min-h-[40px] shrink-0 ${
-                    activeTab === 'settings'
-                      ? 'border-blue-600 text-blue-600 dark:text-blue-400 font-semibold'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <SettingsIcon className="w-3.5 h-3.5" />
-                  <span>Settings</span>
-                </button>
-              </nav>
-            </div>
-
-            {/* Theme Toggle & Indicators */}
-            <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-              <button
-                onClick={toggleTheme}
-                id="theme-toggle-btn"
-                className="p-1.5 sm:p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[34px] min-w-[34px] flex items-center justify-center border border-slate-150 dark:border-slate-800"
-                title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
-              >
-                {isDark ? (
-                  <Sun className="w-4 h-4 text-amber-500 animate-fadeIn" />
-                ) : (
-                  <Moon className="w-4 h-4 text-slate-700 animate-fadeIn" />
-                )}
-              </button>
-
-              <div className="hidden md:flex items-center gap-3 text-xs text-slate-400 font-medium">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-                  Local Autosave
-                </span>
-                <span className="text-slate-300">|</span>
-                <span>Currency: {profile.currency.code} ({profile.currency.symbol})</span>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </header>
+      {/* Responsive Header Navigation with Adaptive Dropdown */}
+      <HeaderNavigation
+        activeTab={activeTab}
+        onChangeTab={handleTabChange}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onSwitchToStaff={handleSwitchToStaff}
+        teamMembers={teamMembers}
+        profile={profile}
+        isDark={isDark}
+        themeMode={themeMode}
+        toggleTheme={toggleTheme}
+      />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-full min-w-0" id="app-main-content">
@@ -458,9 +955,22 @@ export default function App() {
             initial="enter"
             animate="center"
             exit="exit"
-            transition={{ duration: 0.2, ease: "easeInOut" }}
+            transition={{ duration: 0.18, ease: "easeInOut" }}
             className="w-full h-full max-w-full min-w-0"
           >
+            {activeTab === 'dashboard' && (
+              <DashboardView
+                invoices={savedInvoices}
+                profile={profile}
+                clients={clients}
+                onNewInvoice={handleNewInvoice}
+                onSelectInvoice={handleSelectInvoiceFromDashboard}
+                onGoToClients={() => changeTab('clients')}
+                onGoToHistory={() => changeTab('history')}
+                onGoToSettings={() => changeTab('settings')}
+              />
+            )}
+
             {activeTab === 'editor' && (
               <InvoiceEditorView
                 draft={draft}
@@ -476,6 +986,8 @@ export default function App() {
                 canRedo={future.length > 0}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
+                savedItems={savedItems}
+                setSavedItems={setSavedItems}
               />
             )}
 
@@ -487,14 +999,89 @@ export default function App() {
                 onEdit={() => changeTab('editor')}
                 onNewInvoice={handleNewInvoice}
                 onSaveToHistory={handleSaveInvoice}
+                onRecordPayment={handleRecordPayment}
+                onOpenReceipt={() => changeTab('receipt')}
+                onConvertQuoteToInvoice={() => handleConvertQuoteToInvoice(draft)}
+                onUpdateQuoteStatus={handleUpdateQuoteStatus}
               />
             )}
 
             {activeTab === 'history' && (
               <HistoryView
-                invoices={savedInvoices}
+                savedInvoices={savedInvoices}
+                profile={profile}
+                currentUser={currentUser}
+                onSelectInvoice={handleSelectInvoiceFromDashboard}
+                onEditInvoice={handleEditInvoice}
                 onDeleteInvoice={handleDeleteInvoice}
-                onRestoreInvoice={handleRestoreInvoice}
+                onNewInvoice={handleNewInvoice}
+                onDuplicateInvoice={handleDuplicateInvoice}
+                onRecordPaymentForInvoice={(inv) => {
+                  setDraft(inv.draft);
+                  setProfile(inv.profile);
+                  setTax(inv.tax);
+                  setActiveInvoiceId(inv.id);
+                  handleRecordPayment('Cash');
+                }}
+                onConvertQuoteToInvoice={handleConvertQuoteToInvoice}
+                onBack={handleBack}
+              />
+            )}
+
+            {activeTab === 'reports' && (
+              <ReportsView
+                invoices={savedInvoices}
+                profile={profile}
+                clients={clients}
+                currentUser={currentUser}
+                onSelectInvoice={handleSelectInvoiceFromDashboard}
+                onGoToClients={() => changeTab('clients')}
+                onBack={handleBack}
+              />
+            )}
+
+            {activeTab === 'receipt' && (
+              <ReceiptView
+                draft={draft}
+                profile={profile}
+                tax={tax}
+                transactionId={paymentTxnId || 'TXN-88219'}
+                paymentMethod={paymentMethodName || 'Cash'}
+                onBack={() => changeTab('preview')}
+              />
+            )}
+
+            {activeTab === 'clients' && (
+              <ClientsView
+                clients={clients}
+                setClients={setClients}
+                invoices={savedInvoices}
+                profile={profile}
+                currentUser={currentUser}
+                onCreateInvoiceForClient={handleCreateInvoiceForClient}
+                onSelectInvoice={handleSelectInvoiceFromDashboard}
+                onBack={handleBack}
+              />
+            )}
+
+            {activeTab === ('saved_items' as NavTab) && (
+              <SavedItemsView
+                savedItems={savedItems}
+                setSavedItems={setSavedItems}
+                currency={profile.currency}
+                onBack={handleBack}
+              />
+            )}
+
+            {activeTab === 'profile' && (
+              <ProfileView
+                profile={profile}
+                setProfile={setProfile}
+                tax={tax}
+                setTax={setTax}
+                onGoToSettings={handleGoToSettings}
+                currentUser={currentUser}
+                onBack={handleBack}
               />
             )}
 
@@ -506,18 +1093,131 @@ export default function App() {
                 setTax={setTax}
                 isDark={isDark}
                 onToggleTheme={toggleTheme}
+                themeMode={themeMode}
+                onThemeModeChange={setThemeMode}
+                currentUser={currentUser}
+                setCurrentUser={setCurrentUser}
+                twoFactorConfig={twoFactorConfig}
+                setTwoFactorConfig={setTwoFactorConfig}
+                savedInvoices={savedInvoices}
+                clients={clients}
+                savedItems={savedItems}
+                draft={draft}
+                onRestoreDatabase={handleRestoreDatabase}
+                onGoToProfile={() => changeTab('profile')}
+                initialSection={settingsInitialSection}
+                onBack={handleBack}
+                teamMembers={teamMembers}
+                setTeamMembers={setTeamMembers}
+                workspaceConfig={workspaceConfig}
+                setWorkspaceConfig={setWorkspaceConfig}
+                onSwitchToStaff={handleSwitchToStaff}
+                onOpenPinModal={() => setIsStaffPinModalOpen(true)}
+              />
+            )}
+
+            {activeTab === 'login' && (
+              <LoginPage
+                currentUser={currentUser}
+                setCurrentUser={setCurrentUser}
+                twoFactorConfig={twoFactorConfig}
+                workspaceConfig={workspaceConfig}
+                setWorkspaceConfig={setWorkspaceConfig}
+                teamMembers={teamMembers}
+                setTeamMembers={setTeamMembers}
+                onSuccessRedirect={() => changeTab('dashboard')}
+                onBack={handleBack}
               />
             )}
           </motion.div>
         </AnimatePresence>
+
+        {/* Standard Application Footer & Developer Credit */}
+        <footer className="mt-14 pt-6 pb-2 border-t border-slate-200/70 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400 no-print" id="fastinvo-app-footer">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 bg-black p-0.5 rounded-lg border border-slate-700/60 overflow-hidden shrink-0 flex items-center justify-center">
+              <img
+                src={FASTINVO_ICON_MARK}
+                alt="FastInvo Logo"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <div>
+              <span className="font-black text-slate-800 dark:text-slate-200 text-xs">
+                Fast<span className="text-emerald-500">Invo</span>
+              </span>
+              <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-1.5 font-medium">
+                © {new Date().getFullYear()} • Enterprise Invoicing & Billing
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+            <span>Developed by</span>
+            <a
+              href="mailto:fastinvoicd@gmail.com"
+              className="font-extrabold text-slate-800 dark:text-slate-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors inline-flex items-center gap-1 underline decoration-slate-300 dark:decoration-slate-700 underline-offset-2"
+            >
+              Ashraful Islam
+            </a>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono font-bold">
+              v2.4 Pro
+            </span>
+          </div>
+        </footer>
       </main>
 
-      {/* Subtle Footer (Omitted on print) */}
-      <footer className="no-print bg-white dark:bg-slate-900 border-t border-gray-200/60 dark:border-slate-800 py-5 text-center text-xs text-gray-400 dark:text-slate-500 w-full max-w-full min-w-0" id="app-footer">
-        <div className="max-w-7xl mx-auto px-4">
-          <p>© {new Date().getFullYear()} FastInvo. Fast, private, and offline-first invoice builder.</p>
-        </div>
-      </footer>
+      {/* Staff PIN Keypad Login Modal */}
+      <StaffPinLoginModal
+        isOpen={isStaffPinModalOpen}
+        onClose={() => {
+          setIsStaffPinModalOpen(false);
+          setSelectedStaffForPin(null);
+        }}
+        teamMembers={teamMembers}
+        onStaffLoginSuccess={handleStaffPinSuccess}
+        initialMember={selectedStaffForPin}
+      />
+
+      {/* Payment Complete Modal */}
+      <PaymentCompleteModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        draft={draft}
+        profile={profile}
+        tax={tax}
+        transactionId={paymentTxnId}
+        paymentMethod={paymentMethodName}
+        onOpenReceipt={() => changeTab('receipt')}
+        onShareReceipt={() => changeTab('receipt')}
+      />
+
+      {/* Auth & Security Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        setCurrentUser={setCurrentUser}
+        twoFactorConfig={twoFactorConfig}
+        onOpenTwoFactorModal={() => setIsTwoFactorModalOpen(true)}
+      />
+
+      {/* Two-Factor Authentication Modal */}
+      <TwoFactorModal
+        isOpen={isTwoFactorModalOpen}
+        onClose={() => setIsTwoFactorModalOpen(false)}
+        config={twoFactorConfig}
+        onSaveConfig={setTwoFactorConfig}
+      />
+
+      {/* Floating Pinned Mobile/Desktop Bottom Navigation */}
+      <BottomNavigation
+        activeTab={activeTab}
+        onChangeTab={changeTab}
+        onNewInvoice={handleNewInvoice}
+      />
 
     </div>
   );
